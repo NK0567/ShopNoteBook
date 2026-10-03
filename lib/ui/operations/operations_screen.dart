@@ -43,110 +43,140 @@ class _OperationsScreenState extends State<OperationsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Opérations')),
-      body: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Row(children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () => _open(MovementType.sale),
-                icon: const Icon(Icons.point_of_sale),
-                label: const Text('Vente'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: () => _open(MovementType.entry),
-                icon: const Icon(Icons.add_shopping_cart),
-                label: const Text('Entrée'),
-              ),
-            ),
-          ]),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: TextField(
-            onChanged: (v) => setState(() => _query = v.trim()),
-            decoration: const InputDecoration(
-              isDense: true,
-              hintText: 'Produit, référence, client, fournisseur',
-              prefixIcon: Icon(Icons.search),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => _open(MovementType.sale),
+                    icon: const Icon(Icons.point_of_sale),
+                    label: const Text('Vente'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => _open(MovementType.entry),
+                    icon: const Icon(Icons.add_shopping_cart),
+                    label: const Text('Entrée'),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Row(children: [
-            SegmentedButton<MovementType?>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: null, label: Text('Tout')),
-                ButtonSegment(value: MovementType.sale, label: Text('Sorties')),
-                ButtonSegment(value: MovementType.entry, label: Text('Entrées')),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: TextField(
+              onChanged: (v) => setState(() => _query = v.trim()),
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: 'Produit, référence, client, fournisseur',
+                prefixIcon: Icon(Icons.search),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SegmentedButton<MovementType?>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: null, label: Text('Tout')),
+                    ButtonSegment(value: MovementType.sale, label: Text('Ventes')),
+                    ButtonSegment(value: MovementType.entry, label: Text('Entrées')),
+                  ],
+                  selected: {_type},
+                  onSelectionChanged: (s) => setState(() => _type = s.first),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    PopupMenuButton<PeriodKind>(
+                      tooltip: 'Période',
+                      onSelected: _choosePeriod,
+                      itemBuilder: (_) => [
+                        for (final k in PeriodKind.values) PopupMenuItem(value: k, child: Text(k.label)),
+                      ],
+                      child: Chip(avatar: const Icon(Icons.date_range, size: 18), label: Text(_period.label)),
+                    ),
+                    FilterChip(
+                      label: const Text('Afficher les annulées'),
+                      selected: _showCancelled,
+                      onSelected: (v) => setState(() => _showCancelled = v),
+                    ),
+                  ],
+                ),
               ],
-              selected: {_type},
-              onSelectionChanged: (s) => setState(() => _type = s.first),
             ),
-            const SizedBox(width: 8),
-            PopupMenuButton<PeriodKind>(
-              onSelected: _choosePeriod,
-              itemBuilder: (_) => [for (final k in PeriodKind.values) PopupMenuItem(value: k, child: Text(k.label))],
-              child: Chip(avatar: const Icon(Icons.date_range, size: 18), label: Text(_period.label)),
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text('Annulées'),
-              selected: _showCancelled,
-              onSelected: (v) => setState(() => _showCancelled = v),
-            ),
-          ]),
-        ),
-        Expanded(
-          child: Reloading<List<Movement>>(
-            deps: [_type, _period.from, _period.to, _showCancelled, _query],
-            load: (repo, uid) => repo.movements(uid,
+          ),
+          Expanded(
+            child: Reloading<List<Movement>>(
+              deps: [_type, _period.from, _period.to, _showCancelled, _query],
+              load: (repo, uid) => repo.movements(
+                uid,
                 type: _type,
                 from: _period.from,
                 to: _period.to,
                 includeCancelled: _showCancelled,
                 search: _query,
-                limit: 500),
-            builder: (context, list) {
-              if (list.isEmpty) {
-                return const EmptyState(icon: Icons.receipt_long, message: 'Aucune opération sur cette période.');
-              }
-              final active = list.where((m) => !m.cancelled);
-              final sales = active.where((m) => m.type == MovementType.sale).fold<double>(0, (s, m) => s + m.total);
-              final entries = active.where((m) => m.type == MovementType.entry).fold<double>(0, (s, m) => s + m.total);
-              return Column(children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                  child: Row(children: [
-                    Text('${list.length} opération(s)', style: Theme.of(context).textTheme.bodySmall),
-                    const Spacer(),
-                    if (_type != MovementType.entry)
-                      Text('Ventes ${Fmt.money(sales)}  ',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold)),
-                    if (_type != MovementType.sale)
-                      Text('Entrées ${Fmt.money(entries)}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold)),
-                  ]),
-                ),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    itemCount: list.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
-                    itemBuilder: (_, i) => MovementTile(movement: list[i]),
-                  ),
-                ),
-              ]);
-            },
+                limit: 500,
+              ),
+              builder: (context, list) {
+                if (list.isEmpty) {
+                  return const EmptyState(icon: Icons.receipt_long, message: 'Aucune opération sur cette période.');
+                }
+                final active = list.where((m) => !m.cancelled);
+                final sales = active.where((m) => m.type == MovementType.sale).fold<double>(0, (s, m) => s + m.total);
+                final entries = active
+                    .where((m) => m.type == MovementType.entry)
+                    .fold<double>(0, (s, m) => s + m.total);
+                return Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 2,
+                          children: [
+                            Text(Fmt.count(list.length, 'opération'), style: Theme.of(context).textTheme.bodySmall),
+                            if (_type != MovementType.entry)
+                              Text(
+                                'Ventes : ${Fmt.money(sales)}',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                            if (_type != MovementType.sale)
+                              Text(
+                                'Entrées : ${Fmt.money(entries)}',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        itemCount: list.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1, indent: 64),
+                        itemBuilder: (_, i) => MovementTile(movement: list[i]),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 }

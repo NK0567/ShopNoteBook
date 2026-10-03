@@ -80,54 +80,58 @@ class DashboardScreen extends StatelessWidget {
               Text('Bonjour ${user.name.split(' ').first}', style: Theme.of(context).textTheme.titleLarge),
               Text(Fmt.date(DateTime.now()), style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () => _openForm(context, MovementType.sale),
-                    icon: const Icon(Icons.point_of_sale),
-                    label: const Text('Vente'),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => _openForm(context, MovementType.sale),
+                      icon: const Icon(Icons.point_of_sale),
+                      label: const Text('Vente'),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: () => _openForm(context, MovementType.entry),
-                    icon: const Icon(Icons.add_shopping_cart),
-                    label: const Text('Entrée'),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      onPressed: () => _openForm(context, MovementType.entry),
+                      icon: const Icon(Icons.add_shopping_cart),
+                      label: const Text('Entrée'),
+                    ),
                   ),
-                ),
-              ]),
+                ],
+              ),
               const SizedBox(height: 12),
-              KpiGrid(children: [
-                KpiCard(
-                  label: 'Ventes du jour',
-                  value: Fmt.money(d.today.salesAmount),
-                  icon: Icons.today,
-                  subtitle: '${d.today.salesCount} vente(s) · bénéfice ${Fmt.money(d.today.profit)}',
-                ),
-                KpiCard(
-                  label: 'Bénéfice du mois',
-                  value: Fmt.money(d.month.profit),
-                  icon: Icons.trending_up,
-                  color: okColor,
-                  subtitle: 'CA ${Fmt.money(d.month.salesAmount)}',
-                ),
-                KpiCard(
-                  label: 'Valeur du stock',
-                  value: Fmt.money(stockValue),
-                  icon: Icons.inventory,
-                  subtitle: '${d.inventory.length} produit(s), au CUMP',
-                  onTap: () => HomeShell.goToTab(context, HomeShell.tabStock),
-                ),
-                KpiCard(
-                  label: 'Alertes de stock',
-                  value: '${alerts.length}',
-                  icon: Icons.warning_amber,
-                  color: alerts.isEmpty ? okColor : Color(critical > 0 ? user.criticalColor : user.warningColor),
-                  subtitle: critical > 0 ? '$critical urgente(s) ou en rupture' : 'Aucune urgence',
-                  onTap: () => HomeShell.goToTab(context, HomeShell.tabStock),
-                ),
-              ]),
+              KpiGrid(
+                children: [
+                  KpiCard(
+                    label: 'Ventes du jour',
+                    value: Fmt.money(d.today.salesAmount),
+                    icon: Icons.today,
+                    subtitle: '${Fmt.count(d.today.salesCount, 'vente')} · bénéfice ${Fmt.money(d.today.profit)}',
+                  ),
+                  KpiCard(
+                    label: 'Bénéfice du mois',
+                    value: Fmt.money(d.month.profit),
+                    icon: Icons.trending_up,
+                    color: okColor,
+                    subtitle: 'CA ${Fmt.money(d.month.salesAmount)}',
+                  ),
+                  KpiCard(
+                    label: 'Valeur du stock',
+                    value: Fmt.money(stockValue),
+                    icon: Icons.inventory,
+                    subtitle: '${Fmt.count(d.inventory.length, 'produit')}, au CUMP',
+                    onTap: () => HomeShell.goToTab(context, HomeShell.tabStock),
+                  ),
+                  KpiCard(
+                    label: 'Alertes de stock',
+                    value: '${alerts.length}',
+                    icon: Icons.warning_amber,
+                    color: alerts.isEmpty ? okColor : Color(critical > 0 ? user.criticalColor : user.warningColor),
+                    subtitle: critical > 0 ? '${Fmt.count(critical, 'urgente')} ou en rupture' : 'Aucune urgence',
+                    onTap: () => HomeShell.goToTab(context, HomeShell.tabStock),
+                  ),
+                ],
+              ),
               const SectionTitle('Ventes des 7 derniers jours'),
               Card(
                 child: Padding(
@@ -137,19 +141,28 @@ class DashboardScreen extends StatelessWidget {
               ),
               const SectionTitle('Meilleures ventes du mois'),
               if (d.top.isEmpty)
-                const Card(child: ListTile(leading: Icon(Icons.info_outline), title: Text('Aucune vente ce mois-ci')))
+                const Card(
+                  child: ListTile(leading: Icon(Icons.info_outline), title: Text('Aucune vente ce mois-ci')),
+                )
               else
                 Card(
-                  child: Column(children: [
-                    for (var i = 0; i < d.top.length; i++)
-                      ListTile(
-                        leading: CircleAvatar(child: Text('${i + 1}')),
-                        title: Text(d.top[i].name),
-                        subtitle: Text('${d.top[i].quantity} vendu(s) · bénéfice ${Fmt.money(d.top[i].profit)}'),
-                        trailing: Text(Fmt.money(d.top[i].amount), style: const TextStyle(fontWeight: FontWeight.bold)),
-                        onTap: () => _openProduct(context, d.top[i].productId),
-                      ),
-                  ]),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < d.top.length; i++)
+                        ListTile(
+                          leading: CircleAvatar(child: Text('${i + 1}')),
+                          title: Text(d.top[i].name),
+                          subtitle: Text(
+                            '${Fmt.count(d.top[i].quantity, 'vendu')} · bénéfice ${Fmt.money(d.top[i].profit)}',
+                          ),
+                          trailing: Text(
+                            Fmt.money(d.top[i].amount),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          onTap: () => _openProduct(context, d.top[i].productId),
+                        ),
+                    ],
+                  ),
                 ),
               SectionTitle(
                 'À réapprovisionner',
@@ -169,16 +182,20 @@ class DashboardScreen extends StatelessWidget {
                 )
               else
                 Card(
-                  child: Column(children: [
-                    for (final a in alerts.take(5))
-                      ListTile(
-                        leading: Icon(Icons.warning_amber, color: statusColor(context, a.status)),
-                        title: Text(a.product.name),
-                        subtitle: Text('Stock ${a.stock} ${a.product.unit} · seuil ${a.product.alertThreshold}'),
-                        trailing: StatusBadge(a.status, compact: true),
-                        onTap: () => _openProduct(context, a.product.id!),
-                      ),
-                  ]),
+                  child: Column(
+                    children: [
+                      for (final a in alerts.take(5))
+                        ListTile(
+                          leading: Icon(Icons.warning_amber, color: statusColor(context, a.status)),
+                          title: Text(a.product.name),
+                          subtitle: Text(
+                            'Stock ${Fmt.qtyUnit(a.stock, a.product.unit)} · seuil ${a.product.alertThreshold}',
+                          ),
+                          trailing: StatusBadge(a.status, compact: true),
+                          onTap: () => _openProduct(context, a.product.id!),
+                        ),
+                    ],
+                  ),
                 ),
             ],
           );

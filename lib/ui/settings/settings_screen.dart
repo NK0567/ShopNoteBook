@@ -47,12 +47,14 @@ class SettingsScreen extends StatelessWidget {
           ),
           ListTile(
             leading: Icon(Icons.circle, color: Color(user.warningColor)),
-            title: const Text('Couleur « Approvisionnement nécessaire »'),
+            title: const Text('Couleur « À commander »'),
+            subtitle: const Text('Stock sous le seuil d\'alerte'),
             onTap: () => _pickColor(context, user, warning: true),
           ),
           ListTile(
             leading: Icon(Icons.circle, color: Color(user.criticalColor)),
-            title: const Text('Couleur « Urgent / Rupture »'),
+            title: const Text('Couleur « Urgent »'),
+            subtitle: const Text('Stock sous 50 % du seuil ou en rupture'),
             onTap: () => _pickColor(context, user, warning: false),
           ),
           ListTile(
@@ -107,10 +109,12 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Widget _header(BuildContext context, String t) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        child: Text(t,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.primary)),
-      );
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+    child: Text(
+      t,
+      style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.primary),
+    ),
+  );
 
   Future<void> _save(BuildContext context, AppUser updated, [String? msg]) async {
     try {
@@ -122,54 +126,27 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _editProfile(BuildContext context, AppUser user) async {
-    final name = TextEditingController(text: user.name);
-    final business = TextEditingController(text: user.businessName);
-    final ok = await showDialog<bool>(
+    final r = await showDialog<(String, String)>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Profil'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'Votre nom')),
-          const SizedBox(height: 12),
-          TextField(controller: business, decoration: const InputDecoration(labelText: 'Nom de la boutique')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Annuler')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Enregistrer')),
-        ],
-      ),
+      builder: (_) => _ProfileDialog(user: user),
     );
-    if (ok == true && context.mounted) {
-      await _save(context, user.copyWith(name: name.text.trim(), businessName: business.text.trim()));
+    if (r != null && context.mounted) {
+      await _save(context, user.copyWith(name: r.$1, businessName: r.$2));
     }
-    name.dispose();
-    business.dispose();
   }
 
   Future<void> _editThreshold(BuildContext context, AppUser user) async {
-    final ctrl = TextEditingController(text: '${user.defaultAlertThreshold}');
-    final v = await showDialog<int>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Seuil d\'alerte par défaut'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          inputFormatters: intInput,
-          autofocus: true,
-          decoration: const InputDecoration(
-            helperText: 'Sous 50 % du seuil : urgent ; sous le seuil : à commander',
-            helperMaxLines: 2,
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Annuler')),
-          FilledButton(onPressed: () => Navigator.pop(c, int.tryParse(ctrl.text)), child: const Text('OK')),
-        ],
-      ),
+    final v = await promptText(
+      context,
+      title: 'Seuil d\'alerte par défaut',
+      message: 'Sous 50 % du seuil : approvisionnement urgent. Sous le seuil : à commander.',
+      label: 'Seuil',
+      initial: '${user.defaultAlertThreshold}',
+      keyboardType: TextInputType.number,
+      inputFormatters: intInput,
     );
-    ctrl.dispose();
-    if (v != null && context.mounted) await _save(context, user.copyWith(defaultAlertThreshold: v));
+    final n = int.tryParse(v ?? '');
+    if (n != null && context.mounted) await _save(context, user.copyWith(defaultAlertThreshold: n));
   }
 
   Future<void> _pickColor(BuildContext context, AppUser user, {required bool warning}) async {
@@ -180,19 +157,23 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Wrap(spacing: 12, runSpacing: 12, children: [
-              for (final p in _palette)
-                InkWell(
-                  onTap: () => Navigator.pop(d, p),
-                  customBorder: const CircleBorder(),
-                  child: CircleAvatar(
-                    backgroundColor: Color(p),
-                    child: p == (warning ? user.warningColor : user.criticalColor)
-                        ? const Icon(Icons.check, color: Colors.white)
-                        : null,
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final p in _palette)
+                  InkWell(
+                    onTap: () => Navigator.pop(d, p),
+                    customBorder: const CircleBorder(),
+                    child: CircleAvatar(
+                      backgroundColor: Color(p),
+                      child: p == (warning ? user.warningColor : user.criticalColor)
+                          ? const Icon(Icons.check, color: Colors.white)
+                          : null,
+                    ),
                   ),
-                ),
-            ]),
+              ],
+            ),
           ),
         ],
       ),
@@ -270,32 +251,35 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
       title: const Text('Changer le mot de passe'),
       content: Form(
         key: _formKey,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextFormField(
-            controller: _current,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Mot de passe actuel'),
-            validator: (v) => (v == null || v.isEmpty) ? 'Obligatoire' : null,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _next,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Nouveau mot de passe'),
-            validator: Session.validatePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _confirm,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Confirmer'),
-            validator: (v) => v != _next.text ? 'Ne correspond pas' : null,
-          ),
-          if (_error != null) ...[
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _current,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Mot de passe actuel'),
+              validator: (v) => (v == null || v.isEmpty) ? 'Obligatoire' : null,
+            ),
             const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            TextFormField(
+              controller: _next,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Nouveau mot de passe'),
+              validator: Session.validatePassword,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _confirm,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Confirmer'),
+              validator: (v) => v != _next.text ? 'Ne correspond pas' : null,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
           ],
-        ]),
+        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
@@ -308,27 +292,8 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
 class CategoriesScreen extends StatelessWidget {
   const CategoriesScreen({super.key});
 
-  Future<String?> _ask(BuildContext context, String title, [String initial = '']) async {
-    final ctrl = TextEditingController(text: initial);
-    final v = await showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-          onSubmitted: (v) => Navigator.pop(c, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Annuler')),
-          FilledButton(onPressed: () => Navigator.pop(c, ctrl.text), child: const Text('OK')),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    return v;
-  }
+  Future<String?> _ask(BuildContext context, String title, [String initial = '']) =>
+      promptText(context, title: title, label: 'Nom de la catégorie', initial: initial);
 
   @override
   Widget build(BuildContext context) {
@@ -359,33 +324,42 @@ class CategoriesScreen extends StatelessWidget {
           if (cats.isEmpty) {
             return const EmptyState(icon: Icons.category_outlined, message: 'Aucune catégorie.');
           }
-          return ListView(children: [
-            for (final c in cats)
-              ListTile(
-                title: Text(c.name),
-                subtitle: Text('${items.where((i) => i.product.categoryId == c.id).length} produit(s)'),
-                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                  IconButton(
-                    tooltip: 'Renommer',
-                    icon: const Icon(Icons.edit_outlined),
-                    onPressed: () async {
-                      final name = await _ask(context, 'Renommer', c.name);
-                      if (name != null) await run(() => repo.renameCategory(uid, c.id, name));
-                    },
+          return ListView(
+            children: [
+              for (final c in cats)
+                ListTile(
+                  title: Text(c.name),
+                  subtitle: Text(Fmt.count(items.where((i) => i.product.categoryId == c.id).length, 'produit')),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Renommer',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () async {
+                          final name = await _ask(context, 'Renommer', c.name);
+                          if (name != null) await run(() => repo.renameCategory(uid, c.id, name));
+                        },
+                      ),
+                      IconButton(
+                        tooltip: 'Supprimer',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () async {
+                          final ok = await confirm(
+                            context,
+                            'Supprimer « ${c.name} » ?',
+                            'Les produits de cette catégorie passeront en « Sans catégorie ».',
+                            ok: 'Supprimer',
+                            danger: true,
+                          );
+                          if (ok) await run(() => repo.deleteCategory(uid, c.id));
+                        },
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    tooltip: 'Supprimer',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () async {
-                      final ok = await confirm(context, 'Supprimer « ${c.name} » ?',
-                          'Les produits de cette catégorie passeront en « Sans catégorie ».',
-                          ok: 'Supprimer', danger: true);
-                      if (ok) await run(() => repo.deleteCategory(uid, c.id));
-                    },
-                  ),
-                ]),
-              ),
-          ]);
+                ),
+            ],
+          );
         },
       ),
     );
@@ -413,6 +387,67 @@ class AuditScreen extends StatelessWidget {
                 ),
               ),
       ),
+    );
+  }
+}
+
+class _ProfileDialog extends StatefulWidget {
+  const _ProfileDialog({required this.user});
+  final AppUser user;
+
+  @override
+  State<_ProfileDialog> createState() => _ProfileDialogState();
+}
+
+class _ProfileDialogState extends State<_ProfileDialog> {
+  late final _name = TextEditingController(text: widget.user.name);
+  late final _business = TextEditingController(text: widget.user.businessName);
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _business.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String? required(String? v) => (v == null || v.trim().isEmpty) ? 'Obligatoire' : null;
+    return AlertDialog(
+      title: const Text('Profil'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _name,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Votre nom'),
+              validator: required,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _business,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Nom de la boutique'),
+              validator: required,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        FilledButton(
+          onPressed: () {
+            if (_formKey.currentState!.validate()) {
+              Navigator.pop(context, (_name.text.trim(), _business.text.trim()));
+            }
+          },
+          child: const Text('Enregistrer'),
+        ),
+      ],
     );
   }
 }

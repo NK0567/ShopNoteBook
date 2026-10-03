@@ -17,9 +17,7 @@ class ShopBookApp extends StatelessWidget {
       colorScheme: scheme,
       inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
       cardTheme: const CardThemeData(margin: EdgeInsets.zero),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
-      ),
+      filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(minimumSize: const Size(0, 48))),
     );
   }
 
@@ -43,12 +41,14 @@ class ShopBookApp extends StatelessWidget {
       ],
       home: session.isLoggedIn ? const HomeShell() : const LoginScreen(),
       // L'écran de verrouillage recouvre tous les écrans ouverts, sans les fermer.
-      builder: (context, child) => Stack(children: [
-        // Toute interaction (sur n'importe quel écran) repousse le verrouillage auto.
-        Listener(behavior: HitTestBehavior.translucent, onPointerDown: (_) => session.touch(), child: child!),
-        if (session.isLoggedIn && session.isLocked)
-          Overlay(initialEntries: [OverlayEntry(builder: (_) => const LockScreen())]),
-      ]),
+      builder: (context, child) => Stack(
+        children: [
+          // Toute interaction (sur n'importe quel écran) repousse le verrouillage auto.
+          Listener(behavior: HitTestBehavior.translucent, onPointerDown: (_) => session.touch(), child: child!),
+          if (session.isLoggedIn && session.isLocked)
+            Overlay(initialEntries: [OverlayEntry(builder: (_) => const LockScreen())]),
+        ],
+      ),
     );
   }
 }

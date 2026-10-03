@@ -36,44 +36,51 @@ class CategoryPie extends StatelessWidget {
     if (data.isEmpty || total <= 0) {
       return const SizedBox(height: 80, child: Center(child: Text('Pas encore de données')));
     }
-    return Row(children: [
-      SizedBox(
-        width: 130,
-        height: 130,
-        child: PieChart(PieChartData(
-          sectionsSpace: 2,
-          centerSpaceRadius: 28,
-          sections: [
-            for (var i = 0; i < data.length; i++)
-              PieChartSectionData(
-                value: data[i].value,
-                color: chartPalette[i % chartPalette.length],
-                radius: 36,
-                title: data[i].value / total >= 0.08 ? '${(data[i].value / total * 100).round()}%' : '',
-                titleStyle: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-              ),
-          ],
-        )),
-      ),
-      const SizedBox(width: 16),
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var i = 0; i < data.length; i++)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(children: [
-                  Container(width: 10, height: 10, color: chartPalette[i % chartPalette.length]),
-                  const SizedBox(width: 6),
-                  Expanded(child: Text(data[i].category, overflow: TextOverflow.ellipsis)),
-                  Text(Fmt.money(data[i].value), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                ]),
-              ),
-          ],
+    return Column(
+      children: [
+        SizedBox(
+          width: 150,
+          height: 150,
+          child: PieChart(
+            PieChartData(
+              sectionsSpace: 2,
+              centerSpaceRadius: 28,
+              sections: [
+                for (var i = 0; i < data.length; i++)
+                  PieChartSectionData(
+                    value: data[i].value,
+                    color: chartPalette[i % chartPalette.length],
+                    radius: 40,
+                    title: data[i].value / total >= 0.08 ? '${(data[i].value / total * 100).round()} %' : '',
+                    titleStyle: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
-    ]);
+        const SizedBox(height: 12),
+        for (var i = 0; i < data.length; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Container(width: 10, height: 10, color: chartPalette[i % chartPalette.length]),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text(data[i].category)),
+                const SizedBox(width: 8),
+                Text(
+                  '${Fmt.money(data[i].value)} (${(data[i].value / total * 100).round()} %)',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 }
 
@@ -90,49 +97,54 @@ class DailyBars extends StatelessWidget {
     final dayFmt = DateFormat('E', 'fr_FR');
     return SizedBox(
       height: 160,
-      child: BarChart(BarChartData(
-        maxY: maxY <= 0 ? 1 : maxY * 1.15,
-        gridData: const FlGridData(show: false),
-        borderData: FlBorderData(show: false),
-        barTouchData: BarTouchData(
-          touchTooltipData: BarTouchTooltipData(
-            getTooltipItem: (group, _, rod, _) => BarTooltipItem(
-              '${Fmt.date(days[group.x])}\n${Fmt.money(rod.toY)}',
-              const TextStyle(color: Colors.white, fontSize: 12),
-            ),
-          ),
-        ),
-        titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 22,
-              getTitlesWidget: (value, meta) {
-                final i = value.toInt();
-                if (i < 0 || i >= days.length) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(dayFmt.format(days[i]), style: const TextStyle(fontSize: 11)),
-                );
-              },
-            ),
-          ),
-        ),
-        barGroups: [
-          for (var i = 0; i < days.length; i++)
-            BarChartGroupData(x: i, barRods: [
-              BarChartRodData(
-                toY: values[days[i]] ?? 0,
-                color: color,
-                width: 18,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+      child: BarChart(
+        BarChartData(
+          maxY: maxY <= 0 ? 1 : maxY * 1.15,
+          gridData: const FlGridData(show: false),
+          borderData: FlBorderData(show: false),
+          barTouchData: BarTouchData(
+            touchTooltipData: BarTouchTooltipData(
+              getTooltipItem: (group, _, rod, _) => BarTooltipItem(
+                '${Fmt.date(days[group.x])}\n${Fmt.money(rod.toY)}',
+                const TextStyle(color: Colors.white, fontSize: 12),
               ),
-            ]),
-        ],
-      )),
+            ),
+          ),
+          titlesData: FlTitlesData(
+            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 22,
+                getTitlesWidget: (value, meta) {
+                  final i = value.toInt();
+                  if (i < 0 || i >= days.length) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(dayFmt.format(days[i]), style: const TextStyle(fontSize: 11)),
+                  );
+                },
+              ),
+            ),
+          ),
+          barGroups: [
+            for (var i = 0; i < days.length; i++)
+              BarChartGroupData(
+                x: i,
+                barRods: [
+                  BarChartRodData(
+                    toY: values[days[i]] ?? 0,
+                    color: color,
+                    width: 18,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

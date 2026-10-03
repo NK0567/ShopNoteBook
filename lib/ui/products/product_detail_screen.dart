@@ -32,7 +32,10 @@ class ProductDetailScreen extends StatelessWidget {
       builder: (context, d) {
         final item = d.item;
         if (item == null) {
-          return Scaffold(appBar: AppBar(), body: const EmptyState(icon: Icons.search_off, message: 'Produit introuvable'));
+          return Scaffold(
+            appBar: AppBar(),
+            body: const EmptyState(icon: Icons.search_off, message: 'Produit introuvable'),
+          );
         }
         final p = item.product;
         return Scaffold(
@@ -57,90 +60,102 @@ class ProductDetailScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Row(children: [
-                Expanded(
-                  child: Text('${p.reference} · ${item.categoryName ?? 'Sans catégorie'} · ${p.unit}',
-                      style: Theme.of(context).textTheme.bodyMedium),
-                ),
-                StatusBadge(item.status),
-              ]),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${p.reference} · ${item.categoryName ?? 'Sans catégorie'}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ),
+                  StatusBadge(item.status),
+                ],
+              ),
               if (p.archived)
                 const Padding(
                   padding: EdgeInsets.only(top: 8),
                   child: Text('Produit archivé : il n\'apparaît plus dans les ventes ni les entrées.'),
                 ),
               const SizedBox(height: 12),
-              KpiGrid(children: [
-                KpiCard(
-                  label: 'Stock final',
-                  value: '${item.stock} ${p.unit}',
-                  icon: Icons.inventory_2,
-                  color: statusColor(context, item.status),
-                  subtitle: 'Seuil d\'alerte : ${p.alertThreshold}',
-                ),
-                KpiCard(
-                  label: 'Valeur du stock',
-                  value: Fmt.money(item.stockValue),
-                  icon: Icons.account_balance_wallet,
-                  subtitle: 'CUMP ${Fmt.money(item.cump)}',
-                ),
-                KpiCard(
-                  label: 'Ventes cumulées',
-                  value: Fmt.money(item.salesAmount),
-                  icon: Icons.point_of_sale,
-                  subtitle: '${item.qtyOut} ${p.unit} vendu(s)',
-                ),
-                KpiCard(
-                  label: 'Bénéfice cumulé',
-                  value: Fmt.money(item.profit),
-                  icon: Icons.trending_up,
-                  color: item.profit >= 0 ? okColor : Theme.of(context).colorScheme.error,
-                ),
-              ]),
+              KpiGrid(
+                children: [
+                  KpiCard(
+                    label: 'Stock final',
+                    value: Fmt.qtyUnit(item.stock, p.unit),
+                    icon: Icons.inventory_2,
+                    color: statusColor(context, item.status),
+                    subtitle: 'Seuil d\'alerte : ${p.alertThreshold}',
+                  ),
+                  KpiCard(
+                    label: 'Valeur du stock',
+                    value: Fmt.money(item.stockValue),
+                    icon: Icons.account_balance_wallet,
+                    subtitle: 'CUMP ${Fmt.money(item.cump)}',
+                  ),
+                  KpiCard(
+                    label: 'Ventes cumulées',
+                    value: Fmt.money(item.salesAmount),
+                    icon: Icons.point_of_sale,
+                    subtitle: '${Fmt.qtyUnit(item.qtyOut, p.unit)} ${Fmt.plural(item.qtyOut, 'vendu')}',
+                  ),
+                  KpiCard(
+                    label: 'Bénéfice cumulé',
+                    value: Fmt.money(item.profit),
+                    icon: Icons.trending_up,
+                    color: item.profit >= 0 ? okColor : Theme.of(context).colorScheme.error,
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
-                  child: Column(children: [
-                    _line('Stock initial', '${p.initialStock} à ${Fmt.money(p.initialUnitCost)}'),
-                    _line('Entrées', '+ ${item.qtyIn} (${Fmt.money(item.valueIn)})'),
-                    _line('Sorties', '- ${item.qtyOut}'),
-                    const Divider(),
-                    _line('Prix de vente', Fmt.money(p.sellingPrice)),
-                    _line('Marge unitaire au CUMP', Fmt.money(p.sellingPrice - item.cump)),
-                    _line('Taux de marge', Fmt.percent(StockMath.marginRate(p.sellingPrice, item.cump))),
-                    if (item.suggestedReorder > 0) ...[
+                  child: Column(
+                    children: [
+                      _line('Stock initial', '${p.initialStock} à ${Fmt.money(p.initialUnitCost)}'),
+                      _line('Entrées', '+ ${item.qtyIn} (${Fmt.money(item.valueIn)})'),
+                      _line('Sorties', '- ${item.qtyOut}'),
                       const Divider(),
-                      _line('Quantité à commander (suggestion)', '${item.suggestedReorder} ${p.unit}'),
+                      _line('Prix de vente', Fmt.money(p.sellingPrice)),
+                      _line('Marge unitaire au CUMP', Fmt.money(p.sellingPrice - item.cump)),
+                      _line('Taux de marge', Fmt.percent(StockMath.marginRate(p.sellingPrice, item.cump))),
+                      if (item.suggestedReorder > 0) ...[
+                        const Divider(),
+                        _line('Quantité à commander (suggestion)', Fmt.qtyUnit(item.suggestedReorder, p.unit)),
+                      ],
                     ],
-                  ]),
+                  ),
                 ),
               ),
               if (!p.archived) ...[
                 const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: item.stock > 0 ? () => _open(context, MovementType.sale, p) : null,
-                      icon: const Icon(Icons.point_of_sale),
-                      label: const Text('Vendre'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: item.stock > 0 ? () => _open(context, MovementType.sale, p) : null,
+                        icon: const Icon(Icons.point_of_sale),
+                        label: const Text('Vendre'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton.tonalIcon(
-                      onPressed: () => _open(context, MovementType.entry, p),
-                      icon: const Icon(Icons.add_shopping_cart),
-                      label: const Text('Réapprovisionner'),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => _open(context, MovementType.entry, p),
+                        icon: const Icon(Icons.add_shopping_cart),
+                        label: const Text('Entrée'),
+                      ),
                     ),
-                  ),
-                ]),
+                  ],
+                ),
               ],
               SectionTitle('Historique (${d.movements.length})'),
               if (d.movements.isEmpty)
                 const Text('Aucune opération pour ce produit.')
               else
-                Card(child: Column(children: [for (final m in d.movements) MovementTile(movement: m, showProduct: false)])),
+                Card(
+                  child: Column(children: [for (final m in d.movements) MovementTile(movement: m, showProduct: false)]),
+                ),
             ],
           ),
         );
@@ -149,12 +164,21 @@ class ProductDetailScreen extends StatelessWidget {
   }
 
   Widget _line(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(children: [Expanded(child: Text(k)), Text(v, style: const TextStyle(fontWeight: FontWeight.w600))]),
-      );
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      children: [
+        Expanded(child: Text(k)),
+        Text(v, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
+    ),
+  );
 
   void _open(BuildContext context, MovementType type, Product p) => Navigator.push(
-      context, MaterialPageRoute(builder: (_) => MovementFormScreen(type: type, productId: p.id)));
+    context,
+    MaterialPageRoute(
+      builder: (_) => MovementFormScreen(type: type, productId: p.id),
+    ),
+  );
 
   Future<void> _menu(BuildContext context, String action, StockItem item, bool hasMovements) async {
     final repo = context.read<ShopRepository>();
@@ -163,15 +187,23 @@ class ProductDetailScreen extends StatelessWidget {
     try {
       if (action == 'archive') {
         if (!p.archived && item.stock > 0) {
-          final ok = await confirm(context, 'Archiver ${p.name} ?',
-              'Il reste ${item.stock} ${p.unit} en stock. Le produit sera masqué des ventes et entrées.');
+          final ok = await confirm(
+            context,
+            'Archiver ${p.name} ?',
+            'Il reste ${Fmt.qtyUnit(item.stock, p.unit)} en stock. Le produit sera masqué des ventes et entrées.',
+          );
           if (!ok) return;
         }
         await repo.setArchived(uid, p.id!, !p.archived);
       } else if (action == 'delete') {
         if (!context.mounted) return;
-        final ok = await confirm(context, 'Supprimer ${p.name} ?', 'Cette action est définitive.',
-            ok: 'Supprimer', danger: true);
+        final ok = await confirm(
+          context,
+          'Supprimer ${p.name} ?',
+          'Cette action est définitive.',
+          ok: 'Supprimer',
+          danger: true,
+        );
         if (!ok) return;
         await repo.deleteProduct(uid, p.id!);
         if (context.mounted) Navigator.pop(context);

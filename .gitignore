@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Captures générées par test/ui_screens_test.dart (--dart-define=SCREENSHOTS=true)
+/test/goldens/

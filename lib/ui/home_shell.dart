@@ -32,7 +32,11 @@ class _HomeShellState extends State<HomeShell> {
 
   static const _destinations = [
     NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Accueil'),
-    NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Stock'),
+    NavigationDestination(
+      icon: Icon(Icons.inventory_2_outlined),
+      selectedIcon: Icon(Icons.inventory_2),
+      label: 'Stock',
+    ),
     NavigationDestination(icon: Icon(Icons.swap_vert), label: 'Opérations'),
     NavigationDestination(icon: Icon(Icons.insights_outlined), selectedIcon: Icon(Icons.insights), label: 'Rapports'),
     NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Réglages'),
@@ -58,21 +62,15 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        body: IndexedStack(
-          index: _index,
-          children: const [
-            DashboardScreen(),
-            StockScreen(),
-            OperationsScreen(),
-            ReportsScreen(),
-            SettingsScreen(),
-          ],
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _index,
-          onDestinationSelected: _select,
-          destinations: _destinations,
-        ),
+      body: IndexedStack(
+        index: _index,
+        children: const [DashboardScreen(), StockScreen(), OperationsScreen(), ReportsScreen(), SettingsScreen()],
+      ),
+      // Libellés limités à 110 % : au-delà, « Opérations » se coupe sur deux lignes.
+      bottomNavigationBar: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.1,
+        child: NavigationBar(selectedIndex: _index, onDestinationSelected: _select, destinations: _destinations),
+      ),
     );
   }
 }

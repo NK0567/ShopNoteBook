@@ -25,16 +25,16 @@ class AppUser {
   });
 
   factory AppUser.fromMap(Map<String, Object?> m) => AppUser(
-        id: m['id'] as int,
-        name: m['name'] as String,
-        email: m['email'] as String,
-        businessName: m['businessName'] as String,
-        defaultAlertThreshold: m['defaultAlertThreshold'] as int,
-        warningColor: m['warningColor'] as int,
-        criticalColor: m['criticalColor'] as int,
-        autoLockMinutes: m['autoLockMinutes'] as int,
-        createdAt: DateTime.parse(m['createdAt'] as String),
-      );
+    id: m['id'] as int,
+    name: m['name'] as String,
+    email: m['email'] as String,
+    businessName: m['businessName'] as String,
+    defaultAlertThreshold: m['defaultAlertThreshold'] as int,
+    warningColor: m['warningColor'] as int,
+    criticalColor: m['criticalColor'] as int,
+    autoLockMinutes: m['autoLockMinutes'] as int,
+    createdAt: DateTime.parse(m['createdAt'] as String),
+  );
 
   AppUser copyWith({
     String? name,
@@ -43,18 +43,17 @@ class AppUser {
     int? warningColor,
     int? criticalColor,
     int? autoLockMinutes,
-  }) =>
-      AppUser(
-        id: id,
-        name: name ?? this.name,
-        email: email,
-        businessName: businessName ?? this.businessName,
-        defaultAlertThreshold: defaultAlertThreshold ?? this.defaultAlertThreshold,
-        warningColor: warningColor ?? this.warningColor,
-        criticalColor: criticalColor ?? this.criticalColor,
-        autoLockMinutes: autoLockMinutes ?? this.autoLockMinutes,
-        createdAt: createdAt,
-      );
+  }) => AppUser(
+    id: id,
+    name: name ?? this.name,
+    email: email,
+    businessName: businessName ?? this.businessName,
+    defaultAlertThreshold: defaultAlertThreshold ?? this.defaultAlertThreshold,
+    warningColor: warningColor ?? this.warningColor,
+    criticalColor: criticalColor ?? this.criticalColor,
+    autoLockMinutes: autoLockMinutes ?? this.autoLockMinutes,
+    createdAt: createdAt,
+  );
 }
 
 class Category {
@@ -62,8 +61,7 @@ class Category {
   final String name;
   const Category({required this.id, required this.name});
 
-  factory Category.fromMap(Map<String, Object?> m) =>
-      Category(id: m['id'] as int, name: m['name'] as String);
+  factory Category.fromMap(Map<String, Object?> m) => Category(id: m['id'] as int, name: m['name'] as String);
 }
 
 /// Fiche produit (feuille "Marchandise").
@@ -93,22 +91,21 @@ class Product {
   });
 
   factory Product.fromMap(Map<String, Object?> m) => Product(
-        id: m['id'] as int,
-        reference: m['reference'] as String,
-        name: m['name'] as String,
-        categoryId: m['categoryId'] as int?,
-        unit: m['unit'] as String,
-        alertThreshold: m['alertThreshold'] as int,
-        initialStock: m['initialStock'] as int,
-        initialUnitCost: (m['initialUnitCost'] as num).toDouble(),
-        sellingPrice: (m['sellingPrice'] as num).toDouble(),
-        archived: (m['archived'] as int) == 1,
-      );
+    id: m['id'] as int,
+    reference: m['reference'] as String,
+    name: m['name'] as String,
+    categoryId: m['categoryId'] as int?,
+    unit: m['unit'] as String,
+    alertThreshold: m['alertThreshold'] as int,
+    initialStock: m['initialStock'] as int,
+    initialUnitCost: (m['initialUnitCost'] as num).toDouble(),
+    sellingPrice: (m['sellingPrice'] as num).toDouble(),
+    archived: (m['archived'] as int) == 1,
+  );
 
   /// Référence normalisée : sans espaces superflus, en majuscules
   /// (évite les doublons "tc"/"TC" observés dans les classeurs).
-  static String normalizeReference(String raw) =>
-      raw.trim().replaceAll(RegExp(r'\s+'), ' ').toUpperCase();
+  static String normalizeReference(String raw) => raw.trim().replaceAll(RegExp(r'\s+'), ' ').toUpperCase();
 }
 
 /// Ligne d'inventaire calculée (feuille "Inventaire") : jamais stockée,
@@ -135,11 +132,11 @@ class StockItem {
   int get stock => StockMath.finalStock(product.initialStock, qtyIn, qtyOut);
 
   double get cump => StockMath.cump(
-        initialStock: product.initialStock,
-        initialUnitCost: product.initialUnitCost,
-        qtyIn: qtyIn,
-        valueIn: valueIn,
-      );
+    initialStock: product.initialStock,
+    initialUnitCost: product.initialUnitCost,
+    qtyIn: qtyIn,
+    valueIn: valueIn,
+  );
 
   double get stockValue => stock <= 0 ? 0 : stock * cump;
 
@@ -160,8 +157,7 @@ enum MovementType {
   final String code;
   final String label;
 
-  static MovementType fromCode(String code) =>
-      MovementType.values.firstWhere((t) => t.code == code);
+  static MovementType fromCode(String code) => MovementType.values.firstWhere((t) => t.code == code);
 }
 
 /// Mouvement de stock (feuilles "Entrée" et "Sortie").
@@ -206,29 +202,28 @@ class Movement {
   });
 
   factory Movement.fromMap(Map<String, Object?> m) => Movement(
-        id: m['id'] as int,
-        number: m['number'] as int,
-        type: MovementType.fromCode(m['type'] as String),
-        productId: m['productId'] as int,
-        productReference: m['reference'] as String,
-        productName: m['productName'] as String,
-        categoryName: m['categoryName'] as String?,
-        unit: m['unit'] as String,
-        date: DateTime.parse(m['date'] as String),
-        quantity: m['quantity'] as int,
-        unitPrice: (m['unitPrice'] as num).toDouble(),
-        unitCost: (m['unitCost'] as num).toDouble(),
-        partner: m['partner'] as String?,
-        note: m['note'] as String?,
-        cancelled: (m['cancelled'] as int) == 1,
-        cancelReason: m['cancelReason'] as String?,
-        cancelledAt: m['cancelledAt'] == null ? null : DateTime.parse(m['cancelledAt'] as String),
-      );
+    id: m['id'] as int,
+    number: m['number'] as int,
+    type: MovementType.fromCode(m['type'] as String),
+    productId: m['productId'] as int,
+    productReference: m['reference'] as String,
+    productName: m['productName'] as String,
+    categoryName: m['categoryName'] as String?,
+    unit: m['unit'] as String,
+    date: DateTime.parse(m['date'] as String),
+    quantity: m['quantity'] as int,
+    unitPrice: (m['unitPrice'] as num).toDouble(),
+    unitCost: (m['unitCost'] as num).toDouble(),
+    partner: m['partner'] as String?,
+    note: m['note'] as String?,
+    cancelled: (m['cancelled'] as int) == 1,
+    cancelReason: m['cancelReason'] as String?,
+    cancelledAt: m['cancelledAt'] == null ? null : DateTime.parse(m['cancelledAt'] as String),
+  );
 
   double get total => quantity * unitPrice;
 
-  double get profit =>
-      type == MovementType.sale ? StockMath.saleProfit(quantity, unitPrice, unitCost) : 0;
+  double get profit => type == MovementType.sale ? StockMath.saleProfit(quantity, unitPrice, unitCost) : 0;
 
   String get code => '${type == MovementType.entry ? 'E' : 'S'}-${number.toString().padLeft(4, '0')}';
 }

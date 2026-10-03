@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:intl/intl.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../core/format.dart';
 import 'models.dart';
 
 /// Erreur métier affichable telle quelle à l'utilisateur.
@@ -66,13 +67,12 @@ class ShopRepository extends ChangeNotifier {
     return id;
   }
 
-  Future<void> updateLoginState(int userId, {required int failedAttempts, DateTime? lockedUntil}) =>
-      db.update(
-        'users',
-        {'failedAttempts': failedAttempts, 'lockedUntil': lockedUntil == null ? null : iso(lockedUntil)},
-        where: 'id = ?',
-        whereArgs: [userId],
-      );
+  Future<void> updateLoginState(int userId, {required int failedAttempts, DateTime? lockedUntil}) => db.update(
+    'users',
+    {'failedAttempts': failedAttempts, 'lockedUntil': lockedUntil == null ? null : iso(lockedUntil)},
+    where: 'id = ?',
+    whereArgs: [userId],
+  );
 
   Future<void> setPasswordHash(int userId, String hash) =>
       db.update('users', {'passwordHash': hash}, where: 'id = ?', whereArgs: [userId]);
@@ -99,20 +99,19 @@ class ShopRepository extends ChangeNotifier {
   // Journal d'audit
   // ======================================================================
 
-  Future<void> audit(int userId, String action, String details, {DatabaseExecutor? executor}) =>
-      (executor ?? db).insert('audit_log', {
-        'userId': userId,
-        'action': action,
-        'details': details,
-        'createdAt': _now(),
-      });
+  Future<void> audit(int userId, String action, String details, {DatabaseExecutor? executor}) => (executor ?? db)
+      .insert('audit_log', {'userId': userId, 'action': action, 'details': details, 'createdAt': _now()});
 
   Future<List<AuditEntry>> auditLog(int userId, {int limit = 200}) async {
-    final rows = await db.query('audit_log',
-        where: 'userId = ?', whereArgs: [userId], orderBy: 'id DESC', limit: limit);
+    final rows = await db.query(
+      'audit_log',
+      where: 'userId = ?',
+      whereArgs: [userId],
+      orderBy: 'id DESC',
+      limit: limit,
+    );
     return rows
-        .map((r) => AuditEntry(
-            DateTime.parse(r['createdAt'] as String), r['action'] as String, r['details'] as String))
+        .map((r) => AuditEntry(DateTime.parse(r['createdAt'] as String), r['action'] as String, r['details'] as String))
         .toList();
   }
 
@@ -121,16 +120,14 @@ class ShopRepository extends ChangeNotifier {
   // ======================================================================
 
   Future<List<Category>> categories(int userId) async {
-    final rows = await db.query('categories',
-        where: 'userId = ?', whereArgs: [userId], orderBy: 'name COLLATE NOCASE');
+    final rows = await db.query('categories', where: 'userId = ?', whereArgs: [userId], orderBy: 'name COLLATE NOCASE');
     return rows.map(Category.fromMap).toList();
   }
 
   Future<int> addCategory(int userId, String rawName) async {
     final name = rawName.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (name.isEmpty) throw const BusinessException('Le nom de la catégorie est obligatoire');
-    final existing = await db.query('categories',
-        where: 'userId = ? AND name = ?', whereArgs: [userId, name]);
+    final existing = await db.query('categories', where: 'userId = ? AND name = ?', whereArgs: [userId, name]);
     if (existing.isNotEmpty) throw BusinessException('La catégorie "$name" existe déjà');
     final id = await db.insert('categories', {'userId': userId, 'name': name});
     await audit(userId, 'Catégorie', 'Ajout de "$name"');
@@ -141,19 +138,25 @@ class ShopRepository extends ChangeNotifier {
   Future<void> renameCategory(int userId, int categoryId, String rawName) async {
     final name = rawName.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (name.isEmpty) throw const BusinessException('Le nom de la catégorie est obligatoire');
-    final clash = await db.query('categories',
-        where: 'userId = ? AND name = ? AND id <> ?', whereArgs: [userId, name, categoryId]);
+    final clash = await db.query(
+      'categories',
+      where: 'userId = ? AND name = ? AND id <> ?',
+      whereArgs: [userId, name, categoryId],
+    );
     if (clash.isNotEmpty) throw BusinessException('La catégorie "$name" existe déjà');
-    await db.update('categories', {'name': name},
-        where: 'id = ? AND userId = ?', whereArgs: [categoryId, userId]);
+    await db.update('categories', {'name': name}, where: 'id = ? AND userId = ?', whereArgs: [categoryId, userId]);
     await audit(userId, 'Catégorie', 'Renommée en "$name"');
     _changed();
   }
 
   Future<void> deleteCategory(int userId, int categoryId) async {
     await db.transaction((txn) async {
-      await txn.update('products', {'categoryId': null},
-          where: 'categoryId = ? AND userId = ?', whereArgs: [categoryId, userId]);
+      await txn.update(
+        'products',
+        {'categoryId': null},
+        where: 'categoryId = ? AND userId = ?',
+        whereArgs: [categoryId, userId],
+      );
       await txn.delete('categories', where: 'id = ? AND userId = ?', whereArgs: [categoryId, userId]);
       await audit(userId, 'Catégorie', 'Suppression de la catégorie #$categoryId', executor: txn);
     });
@@ -180,14 +183,16 @@ class ShopRepository extends ChangeNotifier {
     }
 
     final id = await db.transaction<int>((txn) async {
-      final clash = await txn.query('products',
-          where: 'userId = ? AND reference = ? AND id <> ?', whereArgs: [userId, reference, p.id ?? -1]);
+      final clash = await txn.query(
+        'products',
+        where: 'userId = ? AND reference = ? AND id <> ?',
+        whereArgs: [userId, reference, p.id ?? -1],
+      );
       if (clash.isNotEmpty) {
         throw BusinessException('La référence "$reference" est déjà utilisée par "${clash.first['name']}"');
       }
       if (p.categoryId != null) {
-        final cat = await txn.query('categories',
-            where: 'id = ? AND userId = ?', whereArgs: [p.categoryId, userId]);
+        final cat = await txn.query('categories', where: 'id = ? AND userId = ?', whereArgs: [p.categoryId, userId]);
         if (cat.isEmpty) throw const BusinessException('Catégorie inconnue');
       }
 
@@ -209,8 +214,7 @@ class ShopRepository extends ChangeNotifier {
           'createdAt': _now(),
         });
         final newId = await txn.insert('products', values);
-        await audit(userId, 'Produit', 'Création $reference — $name (stock initial ${p.initialStock})',
-            executor: txn);
+        await audit(userId, 'Produit', 'Création $reference — $name (stock initial ${p.initialStock})', executor: txn);
         return newId;
       }
 
@@ -222,8 +226,9 @@ class ShopRepository extends ChangeNotifier {
       if (openingChanged && used) {
         // Le stock d'ouverture fait partie de l'historique : il est figé dès le premier mouvement.
         throw const BusinessException(
-            'Stock initial et coût initial ne sont plus modifiables après une entrée ou une sortie. '
-            'Utilisez une entrée de stock.');
+          'Stock initial et coût initial ne sont plus modifiables après une entrée ou une sortie. '
+          'Utilisez une entrée de stock.',
+        );
       }
       values['initialStock'] = p.initialStock;
       values['initialUnitCost'] = p.initialUnitCost;
@@ -237,8 +242,12 @@ class ShopRepository extends ChangeNotifier {
       }
       if (old.alertThreshold != p.alertThreshold) changes.add('seuil ${old.alertThreshold}→${p.alertThreshold}');
       if (openingChanged) changes.add('stock d\'ouverture');
-      await audit(userId, 'Produit',
-          'Modification $reference${changes.isEmpty ? '' : ' : ${changes.join(', ')}'}', executor: txn);
+      await audit(
+        userId,
+        'Produit',
+        'Modification $reference${changes.isEmpty ? '' : ' : ${changes.join(', ')}'}',
+        executor: txn,
+      );
       return p.id!;
     });
     _changed();
@@ -246,8 +255,12 @@ class ShopRepository extends ChangeNotifier {
   }
 
   Future<void> setArchived(int userId, int productId, bool archived) async {
-    await db.update('products', {'archived': archived ? 1 : 0, 'updatedAt': _now()},
-        where: 'id = ? AND userId = ?', whereArgs: [productId, userId]);
+    await db.update(
+      'products',
+      {'archived': archived ? 1 : 0, 'updatedAt': _now()},
+      where: 'id = ? AND userId = ?',
+      whereArgs: [productId, userId],
+    );
     await audit(userId, 'Produit', '${archived ? 'Archivage' : 'Réactivation'} du produit #$productId');
     _changed();
   }
@@ -282,14 +295,14 @@ class ShopRepository extends ChangeNotifier {
   ''';
 
   static StockItem _stockItemFromRow(Map<String, Object?> r) => StockItem(
-        product: Product.fromMap(r),
-        categoryName: r['categoryName'] as String?,
-        qtyIn: (r['qtyIn'] as num).toInt(),
-        valueIn: (r['valueIn'] as num).toDouble(),
-        qtyOut: (r['qtyOut'] as num).toInt(),
-        salesAmount: (r['salesAmount'] as num).toDouble(),
-        profit: (r['profit'] as num).toDouble(),
-      );
+    product: Product.fromMap(r),
+    categoryName: r['categoryName'] as String?,
+    qtyIn: (r['qtyIn'] as num).toInt(),
+    valueIn: (r['valueIn'] as num).toDouble(),
+    qtyOut: (r['qtyOut'] as num).toInt(),
+    salesAmount: (r['salesAmount'] as num).toDouble(),
+    profit: (r['profit'] as num).toDouble(),
+  );
 
   Future<List<StockItem>> inventory(int userId, {bool includeArchived = false}) async {
     final rows = await db.rawQuery(
@@ -301,8 +314,10 @@ class ShopRepository extends ChangeNotifier {
   }
 
   Future<StockItem?> stockItem(int userId, int productId, {DatabaseExecutor? executor}) async {
-    final rows = await (executor ?? db)
-        .rawQuery('$_inventorySql WHERE p.userId = ? AND p.id = ? GROUP BY p.id', [userId, productId]);
+    final rows = await (executor ?? db).rawQuery('$_inventorySql WHERE p.userId = ? AND p.id = ? GROUP BY p.id', [
+      userId,
+      productId,
+    ]);
     return rows.isEmpty ? null : _stockItemFromRow(rows.first);
   }
 
@@ -337,12 +352,14 @@ class ShopRepository extends ChangeNotifier {
       if (item.product.archived) throw const BusinessException('Ce produit est archivé');
       if (type == MovementType.sale && quantity > item.stock) {
         throw BusinessException(
-            'Stock insuffisant pour ${item.product.name} : ${item.stock < 0 ? 0 : item.stock} ${item.product.unit} disponible(s)');
+          'Stock insuffisant pour ${item.product.name} : ${Fmt.qtyUnit(item.stock < 0 ? 0 : item.stock, item.product.unit)} en stock',
+        );
       }
 
       final next = await txn.rawQuery(
-          'SELECT COALESCE(MAX(number), 0) + 1 AS n FROM movements WHERE userId = ? AND type = ?',
-          [userId, type.code]);
+        'SELECT COALESCE(MAX(number), 0) + 1 AS n FROM movements WHERE userId = ? AND type = ?',
+        [userId, type.code],
+      );
       final number = (next.first['n'] as num).toInt();
       // Pour une vente, on fige le CUMP du moment : le bénéfice ne change plus ensuite.
       final unitCost = type == MovementType.sale ? item.cump : unitPrice;
@@ -361,11 +378,12 @@ class ShopRepository extends ChangeNotifier {
         'createdAt': _now(),
       });
       await audit(
-          userId,
-          type.label,
-          '${type == MovementType.entry ? 'E' : 'S'}-$number ${item.product.reference} '
-              'x$quantity à ${unitPrice.round()} FCFA',
-          executor: txn);
+        userId,
+        type.label,
+        '${type == MovementType.entry ? 'E' : 'S'}-$number ${item.product.reference} '
+        'x$quantity à ${unitPrice.round()} FCFA',
+        executor: txn,
+      );
       return newId;
     });
     _changed();
@@ -386,13 +404,22 @@ class ShopRepository extends ChangeNotifier {
         final qty = m['quantity'] as int;
         if (item != null && item.stock - qty < 0) {
           throw BusinessException(
-              'Annulation impossible : une partie de cette entrée a déjà été vendue (stock actuel ${item.stock}).');
+            'Annulation impossible : une partie de cette entrée a déjà été vendue (stock actuel ${item.stock}).',
+          );
         }
       }
-      await txn.update('movements', {'cancelled': 1, 'cancelReason': why, 'cancelledAt': _now()},
-          where: 'id = ?', whereArgs: [movementId]);
-      await audit(userId, 'Annulation',
-          '${m['type'] == 'IN' ? 'E' : 'S'}-${m['number']} annulée : $why', executor: txn);
+      await txn.update(
+        'movements',
+        {'cancelled': 1, 'cancelReason': why, 'cancelledAt': _now()},
+        where: 'id = ?',
+        whereArgs: [movementId],
+      );
+      await audit(
+        userId,
+        'Annulation',
+        '${m['type'] == 'IN' ? 'E' : 'S'}-${m['number']} annulée : $why',
+        executor: txn,
+      );
     });
     _changed();
   }
@@ -455,11 +482,14 @@ class ShopRepository extends ChangeNotifier {
 
   /// Fournisseurs / clients déjà saisis (auto-complétion).
   Future<List<String>> partners(int userId, MovementType type) async {
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT partner, COUNT(*) AS n FROM movements
       WHERE userId = ? AND type = ? AND partner IS NOT NULL AND partner <> ''
       GROUP BY partner COLLATE NOCASE ORDER BY n DESC LIMIT 50
-    ''', [userId, type.code]);
+    ''',
+      [userId, type.code],
+    );
     return rows.map((r) => r['partner'] as String).toList();
   }
 
@@ -509,8 +539,13 @@ class ShopRepository extends ChangeNotifier {
   }
 
   /// Classement des produits les plus vendus (par chiffre d'affaires).
-  Future<List<ProductRanking>> salesRanking(int userId,
-      {DateTime? from, DateTime? to, int? categoryId, int limit = 15}) async {
+  Future<List<ProductRanking>> salesRanking(
+    int userId, {
+    DateTime? from,
+    DateTime? to,
+    int? categoryId,
+    int limit = 15,
+  }) async {
     final args = <Object?>[userId];
     final filter = _periodFilter(args, from, to, categoryId);
     final rows = await db.rawQuery('''
@@ -523,20 +558,21 @@ class ShopRepository extends ChangeNotifier {
       GROUP BY p.id ORDER BY amount DESC, qty DESC LIMIT $limit
     ''', args);
     return rows
-        .map((r) => ProductRanking(
-              productId: r['id'] as int,
-              reference: r['reference'] as String,
-              name: r['name'] as String,
-              quantity: (r['qty'] as num).toInt(),
-              amount: (r['amount'] as num).toDouble(),
-              profit: (r['profit'] as num).toDouble(),
-            ))
+        .map(
+          (r) => ProductRanking(
+            productId: r['id'] as int,
+            reference: r['reference'] as String,
+            name: r['name'] as String,
+            quantity: (r['qty'] as num).toInt(),
+            amount: (r['amount'] as num).toDouble(),
+            profit: (r['profit'] as num).toDouble(),
+          ),
+        )
         .toList();
   }
 
   /// Ventes (ou entrées) par catégorie sur une période.
-  Future<List<CategoryShare>> movementsByCategory(int userId, MovementType type,
-      {DateTime? from, DateTime? to}) async {
+  Future<List<CategoryShare>> movementsByCategory(int userId, MovementType type, {DateTime? from, DateTime? to}) async {
     final args = <Object?>[userId, type.code];
     final filter = _periodFilter(args, from, to, null);
     final rows = await db.rawQuery('''
@@ -551,12 +587,15 @@ class ShopRepository extends ChangeNotifier {
 
   /// Ventes et bénéfice par jour (courbe du tableau de bord).
   Future<Map<DateTime, double>> dailySales(int userId, {required DateTime from, required DateTime to}) async {
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT substr(m.date, 1, 10) AS day, SUM(m.quantity * m.unitPrice) AS total
       FROM movements m
       WHERE m.userId = ? AND m.type = 'OUT' AND m.cancelled = 0 AND m.date >= ? AND m.date < ?
       GROUP BY day
-    ''', [userId, iso(from), iso(to)]);
+    ''',
+      [userId, iso(from), iso(to)],
+    );
     return {for (final r in rows) DateTime.parse(r['day'] as String): (r['total'] as num).toDouble()};
   }
 

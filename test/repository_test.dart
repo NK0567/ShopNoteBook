@@ -21,30 +21,45 @@ void main() {
     db = await AppDatabase.open(factory: testDatabaseFactory(), path: inMemoryDatabasePath);
     repo = ShopRepository(db);
     session = Session(repo, hashIterations: 1000);
-    await session.register(name: 'Boris', email: 'Boris@Test.cm', password: 'Boutique2026', businessName: 'Ma boutique');
+    await session.register(
+      name: 'Boris',
+      email: 'Boris@Test.cm',
+      password: 'Boutique2026',
+      businessName: 'Ma boutique',
+    );
     await session.login('boris@test.cm', 'Boutique2026');
     uid = session.userId;
   });
 
   tearDown(() => db.close());
 
-  Future<int> addProduct({String ref = 'S1', int initial = 14, double cost = 500, double price = 900, int threshold = 10}) =>
-      repo.saveProduct(
-        uid,
-        Product(
-          reference: ref,
-          name: 'Produit $ref',
-          unit: 'unité',
-          alertThreshold: threshold,
-          initialStock: initial,
-          initialUnitCost: cost,
-          sellingPrice: price,
-        ),
-      );
+  Future<int> addProduct({
+    String ref = 'S1',
+    int initial = 14,
+    double cost = 500,
+    double price = 900,
+    int threshold = 10,
+  }) => repo.saveProduct(
+    uid,
+    Product(
+      reference: ref,
+      name: 'Produit $ref',
+      unit: 'unité',
+      alertThreshold: threshold,
+      initialStock: initial,
+      initialUnitCost: cost,
+      sellingPrice: price,
+    ),
+  );
 
-  Future<Movement> move(MovementType t, int productId, int qty, double price, {DateTime? date}) =>
-      repo.recordMovement(
-          userId: uid, type: t, productId: productId, quantity: qty, unitPrice: price, date: date ?? DateTime.now());
+  Future<Movement> move(MovementType t, int productId, int qty, double price, {DateTime? date}) => repo.recordMovement(
+    userId: uid,
+    type: t,
+    productId: productId,
+    quantity: qty,
+    unitPrice: price,
+    date: date ?? DateTime.now(),
+  );
 
   group('Produits', () {
     test('référence normalisée et unique (insensible à la casse)', () async {
@@ -111,8 +126,10 @@ void main() {
 
     test('date future et quantité nulle refusées', () async {
       final id = await addProduct();
-      await expectLater(move(MovementType.entry, id, 1, 100, date: DateTime.now().add(const Duration(days: 2))),
-          throwsA(isA<BusinessException>()));
+      await expectLater(
+        move(MovementType.entry, id, 1, 100, date: DateTime.now().add(const Duration(days: 2))),
+        throwsA(isA<BusinessException>()),
+      );
       await expectLater(move(MovementType.entry, id, 0, 100), throwsA(isA<BusinessException>()));
     });
   });
@@ -143,16 +160,18 @@ void main() {
     final cat = await repo.addCategory(uid, 'Smartphone');
     await expectLater(repo.addCategory(uid, 'SMARTPHONE'), throwsA(isA<BusinessException>()));
     final a = await repo.saveProduct(
-        uid,
-        Product(
-            reference: 'A',
-            name: 'Pixel',
-            categoryId: cat,
-            unit: 'unité',
-            alertThreshold: 1,
-            initialStock: 10,
-            initialUnitCost: 100,
-            sellingPrice: 200));
+      uid,
+      Product(
+        reference: 'A',
+        name: 'Pixel',
+        categoryId: cat,
+        unit: 'unité',
+        alertThreshold: 1,
+        initialStock: 10,
+        initialUnitCost: 100,
+        sellingPrice: 200,
+      ),
+    );
     final b = await addProduct(ref: 'B', initial: 10, cost: 50);
     await move(MovementType.sale, a, 2, 200);
     await move(MovementType.sale, b, 5, 90);
@@ -178,22 +197,28 @@ void main() {
     expect(await repo.inventory(session.userId), isEmpty);
     final other = (await repo.inventory(uid)).single.product.id!;
     await expectLater(
-        repo.recordMovement(
-            userId: session.userId,
-            type: MovementType.sale,
-            productId: other,
-            quantity: 1,
-            unitPrice: 1,
-            date: DateTime.now()),
-        throwsA(isA<BusinessException>()));
+      repo.recordMovement(
+        userId: session.userId,
+        type: MovementType.sale,
+        productId: other,
+        quantity: 1,
+        unitPrice: 1,
+        date: DateTime.now(),
+      ),
+      throwsA(isA<BusinessException>()),
+    );
   });
 
   group('Session', () {
     test('mot de passe faible refusé, email déjà pris refusé', () async {
-      await expectLater(session.register(name: 'X', email: 'x@test.cm', password: 'court', businessName: 'B'),
-          throwsA(isA<AuthException>()));
-      await expectLater(session.register(name: 'X', email: 'BORIS@test.cm', password: 'Valide1234', businessName: 'B'),
-          throwsA(isA<AuthException>()));
+      await expectLater(
+        session.register(name: 'X', email: 'x@test.cm', password: 'court', businessName: 'B'),
+        throwsA(isA<AuthException>()),
+      );
+      await expectLater(
+        session.register(name: 'X', email: 'BORIS@test.cm', password: 'Valide1234', businessName: 'B'),
+        throwsA(isA<AuthException>()),
+      );
     });
 
     test('blocage après 5 échecs, même avec le bon mot de passe', () async {
@@ -235,38 +260,71 @@ void main() {
     final factory = testDatabaseFactory();
     final dir = Directory.systemTemp.createTempSync('shopbook_test');
     final path = '${dir.path}/v1.db';
-    final v1 = await factory.openDatabase(path, options: OpenDatabaseOptions(version: 1, onCreate: (d, _) async {
-      await d.execute('''CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+    final v1 = await factory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: (d, _) async {
+          await d.execute('''CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL, passwordHash TEXT NOT NULL, businessName TEXT NOT NULL,
         criticalStockThreshold INTEGER DEFAULT 5, warningStockThreshold INTEGER DEFAULT 10,
         warningColor TEXT DEFAULT '#FF9800', criticalColor TEXT DEFAULT '#F44336', createdAt TEXT NOT NULL)''');
-      await d.execute('''CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, userId INTEGER NOT NULL,
+          await d.execute('''CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, userId INTEGER NOT NULL,
         name TEXT NOT NULL, description TEXT, costPrice REAL NOT NULL, sellingPrice REAL NOT NULL,
         quantity INTEGER NOT NULL, totalSoldQuantity INTEGER DEFAULT 0, lowStockThreshold INTEGER NOT NULL,
         criticalStockThreshold INTEGER NOT NULL, category TEXT NOT NULL, unit TEXT NOT NULL,
         createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL)''');
-      await d.execute('''CREATE TABLE sales (id INTEGER PRIMARY KEY AUTOINCREMENT, userId INTEGER NOT NULL,
+          await d.execute('''CREATE TABLE sales (id INTEGER PRIMARY KEY AUTOINCREMENT, userId INTEGER NOT NULL,
         productId INTEGER NOT NULL, productName TEXT NOT NULL, quantity INTEGER NOT NULL, unitPrice REAL NOT NULL,
         totalAmount REAL NOT NULL, profit REAL NOT NULL, saleDate TEXT NOT NULL, notes TEXT)''');
-      await d.execute('''CREATE TABLE purchases (id INTEGER PRIMARY KEY AUTOINCREMENT, userId INTEGER NOT NULL,
+          await d.execute('''CREATE TABLE purchases (id INTEGER PRIMARY KEY AUTOINCREMENT, userId INTEGER NOT NULL,
         productId INTEGER NOT NULL, productName TEXT NOT NULL, quantity INTEGER NOT NULL,
         unitCostPrice REAL NOT NULL, totalCost REAL NOT NULL, supplier TEXT NOT NULL, invoiceNumber TEXT,
         purchaseDate TEXT NOT NULL, notes TEXT)''');
-    }));
+        },
+      ),
+    );
     const t = '2025-12-10T09:00:00.000';
-    await v1.insert('users', {'name': 'A', 'email': 'A@B.cm', 'passwordHash': 'x', 'businessName': 'S', 'createdAt': t});
+    await v1.insert('users', {
+      'name': 'A',
+      'email': 'A@B.cm',
+      'passwordHash': 'x',
+      'businessName': 'S',
+      'createdAt': t,
+    });
     await v1.insert('products', {
-      'userId': 1, 'name': 'Riz', 'costPrice': 100.0, 'sellingPrice': 150.0, 'quantity': 12,
-      'lowStockThreshold': 5, 'criticalStockThreshold': 2, 'category': 'Vivres', 'unit': 'sac',
-      'createdAt': t, 'updatedAt': t,
+      'userId': 1,
+      'name': 'Riz',
+      'costPrice': 100.0,
+      'sellingPrice': 150.0,
+      'quantity': 12,
+      'lowStockThreshold': 5,
+      'criticalStockThreshold': 2,
+      'category': 'Vivres',
+      'unit': 'sac',
+      'createdAt': t,
+      'updatedAt': t,
     });
     await v1.insert('purchases', {
-      'userId': 1, 'productId': 1, 'productName': 'Riz', 'quantity': 10, 'unitCostPrice': 100.0,
-      'totalCost': 1000.0, 'supplier': 'Grossiste', 'invoiceNumber': 'F12', 'purchaseDate': t,
+      'userId': 1,
+      'productId': 1,
+      'productName': 'Riz',
+      'quantity': 10,
+      'unitCostPrice': 100.0,
+      'totalCost': 1000.0,
+      'supplier': 'Grossiste',
+      'invoiceNumber': 'F12',
+      'purchaseDate': t,
     });
     await v1.insert('sales', {
-      'userId': 1, 'productId': 1, 'productName': 'Riz', 'quantity': 3, 'unitPrice': 150.0,
-      'totalAmount': 450.0, 'profit': 150.0, 'saleDate': t,
+      'userId': 1,
+      'productId': 1,
+      'productName': 'Riz',
+      'quantity': 3,
+      'unitPrice': 150.0,
+      'totalAmount': 450.0,
+      'profit': 150.0,
+      'saleDate': t,
     });
     await v1.close();
     final v2 = await AppDatabase.open(factory: factory, path: path);

@@ -31,23 +31,19 @@ class PasswordHasher {
     if (iterations == null || iterations <= 0) return false;
     final salt = base64.decode(parts[2]);
     final expected = base64.decode(parts[3]);
-    final actual =
-        _pbkdf2(utf8.encode(password), salt, iterations, expected.length);
+    final actual = _pbkdf2(utf8.encode(password), salt, iterations, expected.length);
     return _constantTimeEquals(actual, expected);
   }
 
   /// Vrai si le hash provient de l'ancienne version (SHA256 sans sel).
-  static bool isLegacy(String stored) =>
-      RegExp(r'^[0-9a-f]{64}$').hasMatch(stored);
+  static bool isLegacy(String stored) => RegExp(r'^[0-9a-f]{64}$').hasMatch(stored);
 
-  static Uint8List _pbkdf2(
-      List<int> password, List<int> salt, int iterations, int keyLength) {
+  static Uint8List _pbkdf2(List<int> password, List<int> salt, int iterations, int keyLength) {
     final hmac = Hmac(sha256, password);
     final blocks = (keyLength / 32).ceil();
     final out = BytesBuilder();
     for (var i = 1; i <= blocks; i++) {
-      final block = Uint8List.fromList(
-          [...salt, (i >> 24) & 0xff, (i >> 16) & 0xff, (i >> 8) & 0xff, i & 0xff]);
+      final block = Uint8List.fromList([...salt, (i >> 24) & 0xff, (i >> 16) & 0xff, (i >> 8) & 0xff, i & 0xff]);
       var u = hmac.convert(block).bytes;
       final t = Uint8List.fromList(u);
       for (var j = 1; j < iterations; j++) {

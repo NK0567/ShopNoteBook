@@ -78,23 +78,36 @@ class KpiCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Row(children: [
-                Icon(icon, color: c, size: 20),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(label,
-                      style: Theme.of(context).textTheme.labelMedium, overflow: TextOverflow.ellipsis),
-                ),
-              ]),
+              Row(
+                children: [
+                  Icon(icon, color: c, size: 20),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: Theme.of(context).textTheme.labelMedium,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
-                child: Text(value,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, color: c)),
+                child: Text(
+                  value,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, color: c),
+                ),
               ),
               if (subtitle != null)
-                Text(subtitle!, style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                Text(
+                  subtitle!,
+                  style: Theme.of(context).textTheme.bodySmall,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
             ],
           ),
         ),
@@ -110,15 +123,23 @@ class KpiGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, c) {
-      final cols = c.maxWidth > 700 ? 4 : 2;
-      final w = (c.maxWidth - (cols - 1) * 8) / cols;
-      return Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [for (final child in children) SizedBox(width: w, child: child)],
-      );
-    });
+    return LayoutBuilder(
+      builder: (context, c) {
+        final cols = c.maxWidth > 700 ? 4 : 2;
+        final rows = <Widget>[];
+        for (var i = 0; i < children.length; i += cols) {
+          final cells = <Widget>[];
+          for (var j = 0; j < cols; j++) {
+            if (j > 0) cells.add(const SizedBox(width: 8));
+            final k = i + j;
+            cells.add(Expanded(child: k < children.length ? children[k] : const SizedBox.shrink()));
+          }
+          if (rows.isNotEmpty) rows.add(const SizedBox(height: 8));
+          rows.add(Row(crossAxisAlignment: CrossAxisAlignment.start, children: cells));
+        }
+        return Column(children: rows);
+      },
+    );
   }
 }
 
@@ -133,12 +154,15 @@ class EmptyState extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 56, color: Theme.of(context).colorScheme.outline),
-          const SizedBox(height: 12),
-          Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyLarge),
-          if (action != null) ...[const SizedBox(height: 16), action!],
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 56, color: Theme.of(context).colorScheme.outline),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyLarge),
+            if (action != null) ...[const SizedBox(height: 16), action!],
+          ],
+        ),
       ),
     );
   }
@@ -151,15 +175,16 @@ class SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
-        child: Row(children: [
-          Expanded(
-            child: Text(text,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-          ),
-          if (trailing != null) trailing!,
-        ]),
-      );
+    padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(text, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        ),
+        if (trailing != null) trailing!,
+      ],
+    ),
+  );
 }
 
 void showError(BuildContext context, Object e) {
@@ -175,8 +200,13 @@ void showSuccess(BuildContext context, String msg) {
     ..showSnackBar(SnackBar(content: Text(msg), backgroundColor: okColor));
 }
 
-Future<bool> confirm(BuildContext context, String title, String message,
-    {String ok = 'Confirmer', bool danger = false}) async {
+Future<bool> confirm(
+  BuildContext context,
+  String title,
+  String message, {
+  String ok = 'Confirmer',
+  bool danger = false,
+}) async {
   final r = await showDialog<bool>(
     context: context,
     builder: (c) => AlertDialog(
@@ -195,9 +225,8 @@ Future<bool> confirm(BuildContext context, String title, String message,
   return r ?? false;
 }
 
-/// Champs numériques : chiffres, espaces et séparateur décimal uniquement.
+/// Champs numériques entiers (quantités, montants en FCFA).
 final List<TextInputFormatter> intInput = [FilteringTextInputFormatter.digitsOnly];
-final List<TextInputFormatter> decimalInput = [FilteringTextInputFormatter.allow(RegExp(r'[0-9 ,.]'))];
 
 String? requiredInt(String? v, {int min = 0, String field = 'Ce champ'}) {
   final n = int.tryParse(v?.trim() ?? '');
@@ -265,6 +294,121 @@ class _ReloadingState<T> extends State<Reloading<T>> {
         if (data == null) return const Center(child: CircularProgressIndicator());
         return widget.builder(context, data);
       },
+    );
+  }
+}
+
+/// Boîte de saisie d'un texte. Le contrôleur appartient au dialogue :
+/// il n'est libéré qu'après la fin de l'animation de fermeture.
+Future<String?> promptText(
+  BuildContext context, {
+  required String title,
+  String? message,
+  String? label,
+  String? hint,
+  String initial = '',
+  String ok = 'OK',
+  bool danger = false,
+  bool requireValue = true,
+  TextInputType? keyboardType,
+  List<TextInputFormatter>? inputFormatters,
+  TextCapitalization capitalization = TextCapitalization.sentences,
+}) => showDialog<String>(
+  context: context,
+  builder: (_) => _PromptDialog(
+    title: title,
+    message: message,
+    label: label,
+    hint: hint,
+    initial: initial,
+    ok: ok,
+    danger: danger,
+    requireValue: requireValue,
+    keyboardType: keyboardType,
+    inputFormatters: inputFormatters,
+    capitalization: capitalization,
+  ),
+);
+
+class _PromptDialog extends StatefulWidget {
+  const _PromptDialog({
+    required this.title,
+    this.message,
+    this.label,
+    this.hint,
+    required this.initial,
+    required this.ok,
+    required this.danger,
+    required this.requireValue,
+    this.keyboardType,
+    this.inputFormatters,
+    required this.capitalization,
+  });
+
+  final String title;
+  final String? message;
+  final String? label;
+  final String? hint;
+  final String initial;
+  final String ok;
+  final bool danger;
+  final bool requireValue;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final TextCapitalization capitalization;
+
+  @override
+  State<_PromptDialog> createState() => _PromptDialogState();
+}
+
+class _PromptDialogState extends State<_PromptDialog> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.initial);
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (widget.requireValue && _ctrl.text.trim().isEmpty) {
+      setState(() => _error = 'Ce champ est obligatoire');
+      return;
+    }
+    Navigator.pop(context, _ctrl.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.message != null) ...[Text(widget.message!), const SizedBox(height: 12)],
+            TextField(
+              controller: _ctrl,
+              autofocus: true,
+              keyboardType: widget.keyboardType,
+              inputFormatters: widget.inputFormatters,
+              textCapitalization: widget.capitalization,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(labelText: widget.label, hintText: widget.hint, errorText: _error),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        FilledButton(
+          style: widget.danger ? FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error) : null,
+          onPressed: _submit,
+          child: Text(widget.ok),
+        ),
+      ],
     );
   }
 }

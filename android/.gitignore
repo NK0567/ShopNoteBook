@@ -15,3 +15,8 @@ key.properties
 
 # Rapports de build Gradle
 /build/
+
+# Journaux de plantage de la JVM
+hs_err_pid*.log
+replay_pid*.log
+.kotlin/

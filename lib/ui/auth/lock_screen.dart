@@ -44,34 +44,40 @@ class _LockScreenState extends State<LockScreen> {
     final session = context.read<Session>();
     final user = session.user;
     return AuthScaffold(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        AppLogo(subtitle: user?.businessName ?? ''),
-        const SizedBox(height: 24),
-        Text('Application verrouillée', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 4),
-        Text('Saisissez le mot de passe de ${user?.email ?? ''}',
-            textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 24),
-        TextField(
-          controller: _password,
-          obscureText: true,
-          autofocus: true,
-          onSubmitted: (_) => _unlock(),
-          decoration: const InputDecoration(labelText: 'Mot de passe', prefixIcon: Icon(Icons.lock_outline)),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 12),
-          Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AppLogo(subtitle: user?.businessName ?? ''),
+          const SizedBox(height: 24),
+          Text('Application verrouillée', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            'Saisissez le mot de passe de ${user?.email ?? ''}',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 24),
+          TextField(
+            controller: _password,
+            obscureText: true,
+            autofocus: true,
+            onSubmitted: (_) => _unlock(),
+            decoration: const InputDecoration(labelText: 'Mot de passe', prefixIcon: Icon(Icons.lock_outline)),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: _busy ? null : _unlock,
+            icon: const Icon(Icons.lock_open),
+            label: const Text('Déverrouiller'),
+          ),
+          const SizedBox(height: 8),
+          TextButton(onPressed: _busy ? null : session.logout, child: const Text('Changer de compte')),
         ],
-        const SizedBox(height: 24),
-        FilledButton.icon(
-          onPressed: _busy ? null : _unlock,
-          icon: const Icon(Icons.lock_open),
-          label: const Text('Déverrouiller'),
-        ),
-        const SizedBox(height: 8),
-        TextButton(onPressed: _busy ? null : session.logout, child: const Text('Changer de compte')),
-      ]),
+      ),
     );
   }
 }

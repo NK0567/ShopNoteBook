@@ -44,10 +44,10 @@ class Period {
 
   /// Plage personnalisée, bornes incluses (jour entier).
   factory Period.custom(DateTime start, DateTime end) => Period._(
-        PeriodKind.custom,
-        DateTime(start.year, start.month, start.day),
-        DateTime(end.year, end.month, end.day).add(const Duration(days: 1)),
-      );
+    PeriodKind.custom,
+    DateTime(start.year, start.month, start.day),
+    DateTime(end.year, end.month, end.day).add(const Duration(days: 1)),
+  );
 
   String get label {
     if (kind == PeriodKind.custom && from != null && to != null) {

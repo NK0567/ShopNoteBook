@@ -110,8 +110,8 @@ class Session extends ChangeNotifier {
       if (until != null) {
         throw AuthException('Trop de tentatives. Compte bloqué ${_humanDelay(until.difference(DateTime.now()))}.');
       }
-      final left = maxAttempts - failed;
-      throw AuthException('Email ou mot de passe incorrect ($left essai${left > 1 ? 's' : ''} restant${left > 1 ? 's' : ''})');
+      // Même message qu'un email inconnu : on ne révèle pas quels comptes existent.
+      throw const AuthException('Email ou mot de passe incorrect');
     }
 
     await repo.updateLoginState(userId, failedAttempts: 0);
@@ -163,7 +163,9 @@ class Session extends ChangeNotifier {
         logout();
         throw const AuthException('Trop d\'échecs : vous avez été déconnecté.');
       }
-      throw AuthException('Mot de passe incorrect (${maxAttempts - _unlockFailures} essai(s) restant(s))');
+      throw AuthException(
+        'Mot de passe incorrect (${maxAttempts - _unlockFailures} essai${maxAttempts - _unlockFailures > 1 ? 's' : ''} restant${maxAttempts - _unlockFailures > 1 ? 's' : ''})',
+      );
     }
     _unlockFailures = 0;
     _locked = false;

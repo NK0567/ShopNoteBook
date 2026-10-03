@@ -28,8 +28,7 @@ enum StockStatus {
 
 class StockMath {
   /// Stock final = stock initial + entrées - sorties.
-  static int finalStock(int initialStock, int qtyIn, int qtyOut) =>
-      initialStock + qtyIn - qtyOut;
+  static int finalStock(int initialStock, int qtyIn, int qtyOut) => initialStock + qtyIn - qtyOut;
 
   /// Coût unitaire moyen pondéré (CUMP) :
   /// (valeur du stock initial + total des entrées) / (stock initial + quantités entrées).
@@ -52,8 +51,7 @@ class StockMath {
   }
 
   /// Bénéfice d'une vente : (prix de vente - CUMP) x quantité.
-  static double saleProfit(int quantity, double unitPrice, double unitCost) =>
-      (unitPrice - unitCost) * quantity;
+  static double saleProfit(int quantity, double unitPrice, double unitCost) => (unitPrice - unitCost) * quantity;
 
   /// Marge en % du prix de vente.
   static double marginRate(double unitPrice, double unitCost) =>
