@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../../core/format.dart';
 import '../../data/models.dart';
 import '../../data/shop_repository.dart';
+import '../../services/backup_service.dart';
 import '../../services/session.dart';
+import '../auth/recovery_code_dialog.dart';
 import '../common.dart';
 
 const _palette = <int>[
@@ -77,6 +79,16 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => _changePassword(context),
           ),
           ListTile(
+            leading: Icon(Icons.key_outlined, color: user.hasRecoveryCode ? null : Theme.of(context).colorScheme.error),
+            title: const Text('Code de secours'),
+            subtitle: Text(
+              user.hasRecoveryCode
+                  ? 'Perdu ? Générez-en un nouveau (l\'ancien ne marchera plus)'
+                  : 'Aucun code : créez-le maintenant',
+            ),
+            onTap: () => _newRecoveryCode(context),
+          ),
+          ListTile(
             leading: const Icon(Icons.history),
             title: const Text('Journal d\'activité'),
             subtitle: const Text('Connexions, modifications, annulations'),
@@ -98,10 +110,34 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
           const Divider(),
+          _header(context, 'Données'),
+          ListTile(
+            leading: const Icon(Icons.backup_outlined),
+            title: const Text('Sauvegarder la boutique'),
+            subtitle: const Text('Fichier chiffré à garder hors du téléphone (Drive, e-mail)'),
+            onTap: () => _backup(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.restore),
+            title: const Text('Restaurer une sauvegarde'),
+            subtitle: const Text('Remplace toutes les données actuelles'),
+            onTap: () => _restore(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.table_view_outlined),
+            title: const Text('Exporter le stock (CSV pour Excel)'),
+            onTap: () => _csv(context, movements: false),
+          ),
+          ListTile(
+            leading: const Icon(Icons.table_view_outlined),
+            title: const Text('Exporter les opérations (CSV pour Excel)'),
+            onTap: () => _csv(context, movements: true),
+          ),
+          const Divider(),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ShopBook 2.0'),
-            subtitle: Text('Données stockées uniquement sur cet appareil.'),
+            title: Text('ShopBook 3.0'),
+            subtitle: Text('Données stockées uniquement sur cet appareil : sauvegardez chaque semaine.'),
           ),
         ],
       ),
@@ -115,6 +151,101 @@ class SettingsScreen extends StatelessWidget {
       style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.primary),
     ),
   );
+
+  /// Demande le mot de passe du compte (opérations sensibles).
+  Future<String?> _askPassword(BuildContext context, String title, String message) => promptText(
+    context,
+    title: title,
+    message: message,
+    label: 'Mot de passe du compte',
+    obscure: true,
+    capitalization: TextCapitalization.none,
+  );
+
+  Future<void> _newRecoveryCode(BuildContext context) async {
+    final pwd = await _askPassword(
+      context,
+      'Nouveau code de secours',
+      'Saisissez votre mot de passe. L\'ancien code de secours ne fonctionnera plus.',
+    );
+    if (pwd == null || !context.mounted) return;
+    try {
+      final code = await context.read<Session>().regenerateRecoveryCode(pwd);
+      if (context.mounted) await showRecoveryCode(context, code);
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _backup(BuildContext context) async {
+    final pwd = await promptText(
+      context,
+      title: 'Mot de passe de la sauvegarde',
+      message:
+          'Il protège le fichier : sans lui, la sauvegarde ne pourra pas être restaurée. '
+          'Vous pouvez reprendre votre mot de passe habituel. 8 caractères minimum.',
+      label: 'Mot de passe de la sauvegarde',
+      obscure: true,
+      capitalization: TextCapitalization.none,
+      ok: 'Créer la sauvegarde',
+    );
+    if (pwd == null || !context.mounted) return;
+    if (pwd.length < 8) {
+      showError(context, const BusinessException('8 caractères minimum pour le mot de passe de sauvegarde'));
+      return;
+    }
+    try {
+      final repo = context.read<ShopRepository>();
+      final uid = context.read<Session>().userId;
+      final bytes = await BackupService.encrypt(await repo.exportData(uid), pwd);
+      await repo.audit(uid, 'Sauvegarde', 'Sauvegarde chiffrée exportée');
+      await BackupService.shareBackup(bytes);
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _restore(BuildContext context) async {
+    final ok = await confirm(
+      context,
+      'Restaurer une sauvegarde ?',
+      'Tous les produits, ventes, crédits et opérations actuels seront REMPLACÉS par ceux de la sauvegarde. '
+          'Faites d\'abord une sauvegarde de l\'état actuel si vous avez un doute.',
+      ok: 'Choisir le fichier',
+      danger: true,
+    );
+    if (!ok || !context.mounted) return;
+    try {
+      final bytes = await BackupService.pickBackupFile();
+      if (bytes == null || !context.mounted) return;
+      final pwd = await promptText(
+        context,
+        title: 'Mot de passe de la sauvegarde',
+        label: 'Mot de passe',
+        obscure: true,
+        capitalization: TextCapitalization.none,
+        ok: 'Restaurer',
+      );
+      if (pwd == null || !context.mounted) return;
+      final data = await BackupService.decrypt(bytes, pwd);
+      if (!context.mounted) return;
+      await context.read<ShopRepository>().importData(context.read<Session>().userId, data);
+      if (context.mounted) showSuccess(context, 'Sauvegarde restaurée');
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _csv(BuildContext context, {required bool movements}) async {
+    try {
+      final repo = context.read<ShopRepository>();
+      final uid = context.read<Session>().userId;
+      final csv = movements ? await repo.movementsCsv(uid) : await repo.inventoryCsv(uid);
+      await BackupService.shareCsv(csv, movements ? 'operations' : 'stock');
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
 
   Future<void> _save(BuildContext context, AppUser updated, [String? msg]) async {
     try {

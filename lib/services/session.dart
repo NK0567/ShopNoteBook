@@ -62,7 +62,8 @@ class Session extends ChangeNotifier {
   // Inscription / connexion
   // --------------------------------------------------------------------
 
-  Future<void> register({
+  /// Crée le compte et retourne le code de secours (à afficher une seule fois).
+  Future<String> register({
     required String name,
     required String email,
     required String password,
@@ -79,7 +80,10 @@ class Session extends ChangeNotifier {
       throw const AuthException('Un compte existe déjà avec cet email');
     }
     final hash = await _hash(password);
-    await repo.createUser(name: name, email: email, passwordHash: hash, businessName: businessName);
+    final id = await repo.createUser(name: name, email: email, passwordHash: hash, businessName: businessName);
+    final code = generateRecoveryCode();
+    await repo.setRecoveryHash(id, await _hash(normalizeRecoveryCode(code)));
+    return code;
   }
 
   Future<void> login(String email, String password) async {
@@ -98,20 +102,8 @@ class Session extends ChangeNotifier {
     final stored = row['passwordHash'] as String;
     final ok = await compute(_verifyIsolate, [password, stored]);
     if (!ok) {
-      final failed = (row['failedAttempts'] as int) + 1;
-      DateTime? until;
-      if (failed >= maxAttempts) {
-        final factor = pow(2, failed - maxAttempts).toInt();
-        final delay = baseLockout * factor;
-        until = DateTime.now().add(delay > maxLockout ? maxLockout : delay);
-      }
-      await repo.updateLoginState(userId, failedAttempts: failed, lockedUntil: until);
-      await repo.audit(userId, 'Sécurité', 'Échec de connexion ($failed)');
-      if (until != null) {
-        throw AuthException('Trop de tentatives. Compte bloqué ${_humanDelay(until.difference(DateTime.now()))}.');
-      }
       // Même message qu'un email inconnu : on ne révèle pas quels comptes existent.
-      throw const AuthException('Email ou mot de passe incorrect');
+      await _registerFailure(row, 'Échec de connexion', 'Email ou mot de passe incorrect');
     }
 
     await repo.updateLoginState(userId, failedAttempts: 0);
@@ -125,6 +117,91 @@ class Session extends ChangeNotifier {
     _unlockFailures = 0;
     _lastActivity = DateTime.now();
     notifyListeners();
+  }
+
+  /// Compte un échec (connexion ou code de secours) et bloque le compte au-delà de [maxAttempts].
+  Future<Never> _registerFailure(Map<String, Object?> row, String label, String message) async {
+    final userId = row['id'] as int;
+    final failed = (row['failedAttempts'] as int) + 1;
+    DateTime? until;
+    if (failed >= maxAttempts) {
+      final factor = pow(2, failed - maxAttempts).toInt();
+      final delay = baseLockout * factor;
+      until = DateTime.now().add(delay > maxLockout ? maxLockout : delay);
+    }
+    await repo.updateLoginState(userId, failedAttempts: failed, lockedUntil: until);
+    await repo.audit(userId, 'Sécurité', '$label ($failed)');
+    if (until != null) {
+      throw AuthException('Trop de tentatives. Compte bloqué ${_humanDelay(until.difference(DateTime.now()))}.');
+    }
+    throw AuthException(message);
+  }
+
+  // --------------------------------------------------------------------
+  // Code de secours (mot de passe oublié)
+  // --------------------------------------------------------------------
+
+  static const _codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+  /// Code de 12 caractères sans caractères ambigus (0/O, 1/I) : « ABCD-EFGH-JKLM ».
+  static String generateRecoveryCode() {
+    final rnd = Random.secure();
+    final chars = List.generate(12, (_) => _codeAlphabet[rnd.nextInt(_codeAlphabet.length)]).join();
+    return '${chars.substring(0, 4)}-${chars.substring(4, 8)}-${chars.substring(8)}';
+  }
+
+  static String normalizeRecoveryCode(String code) => code.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+
+  /// Réinitialise le mot de passe avec le code de secours. Retourne le NOUVEAU code
+  /// (l'ancien ne fonctionne plus). Les échecs comptent pour le blocage du compte.
+  Future<String> resetPasswordWithCode({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final pwdError = validatePassword(newPassword);
+    if (pwdError != null) throw AuthException(pwdError);
+    const invalid = 'Email ou code de secours incorrect';
+    final row = await repo.findUserRowByEmail(email);
+    if (row == null) {
+      await _hash(code);
+      throw const AuthException(invalid);
+    }
+    final lockedUntil = row['lockedUntil'] == null ? null : DateTime.parse(row['lockedUntil'] as String);
+    if (lockedUntil != null && lockedUntil.isAfter(DateTime.now())) {
+      throw AuthException('Trop de tentatives. Réessayez dans ${_humanDelay(lockedUntil.difference(DateTime.now()))}.');
+    }
+    final stored = row['recoveryHash'] as String?;
+    if (stored == null) {
+      throw const AuthException(
+        'Ce compte n\'a pas de code de secours. Sans le mot de passe, les données ne peuvent pas être récupérées.',
+      );
+    }
+    final ok = await compute(_verifyIsolate, [normalizeRecoveryCode(code), stored]);
+    if (!ok) await _registerFailure(row, 'Échec du code de secours', invalid);
+
+    final userId = row['id'] as int;
+    await repo.setPasswordHash(userId, await _hash(newPassword));
+    final next = generateRecoveryCode();
+    await repo.setRecoveryHash(userId, await _hash(normalizeRecoveryCode(next)));
+    await repo.updateLoginState(userId, failedAttempts: 0);
+    await repo.audit(userId, 'Sécurité', 'Mot de passe réinitialisé avec le code de secours');
+    return next;
+  }
+
+  /// Génère un nouveau code de secours (l'ancien est invalidé). Exige le mot de passe.
+  Future<String> regenerateRecoveryCode(String password) async {
+    final row = await repo.findUserRowById(userId);
+    if (row == null || !await compute(_verifyIsolate, [password, row['passwordHash'] as String])) {
+      await repo.audit(userId, 'Sécurité', 'Échec de génération du code de secours');
+      throw const AuthException('Mot de passe incorrect');
+    }
+    final code = generateRecoveryCode();
+    await repo.setRecoveryHash(userId, await _hash(normalizeRecoveryCode(code)));
+    await repo.audit(userId, 'Sécurité', 'Nouveau code de secours généré');
+    _user = AppUser.fromMap((await repo.findUserRowById(userId))!);
+    notifyListeners();
+    return code;
   }
 
   void logout() {

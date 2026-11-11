@@ -18,7 +18,16 @@ class _ReportData {
   final List<CategoryShare> stockByCategory;
   final List<Category> categories;
   final double stockValue;
-  _ReportData(this.summary, this.ranking, this.salesByCategory, this.stockByCategory, this.categories, this.stockValue);
+  final List<CategoryShare> suppliers;
+  _ReportData(
+    this.summary,
+    this.ranking,
+    this.salesByCategory,
+    this.stockByCategory,
+    this.categories,
+    this.stockValue,
+    this.suppliers,
+  );
 }
 
 /// Bénéfices, classement des ventes et analyses par catégorie
@@ -57,6 +66,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       ShopRepository.stockValueByCategory(inventory),
       await repo.categories(uid),
       filtered.fold<double>(0, (s, i) => s + i.stockValue),
+      await repo.purchasesBySupplier(uid, from: _period.from, to: _period.to),
     );
   }
 
@@ -149,12 +159,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     subtitle: '${Fmt.count(s.salesCount, 'vente')} · ${Fmt.count(s.qtyOut, 'article')}',
                   ),
                   KpiCard(
-                    label: 'Bénéfice',
-                    value: Fmt.money(s.profit),
+                    label: 'Bénéfice net',
+                    value: Fmt.money(s.netProfit),
                     icon: Icons.trending_up,
-                    color: s.profit >= 0 ? okColor : Theme.of(context).colorScheme.error,
-                    subtitle: 'Marge ${Fmt.percent(s.marginRate)}',
+                    color: s.netProfit >= 0 ? okColor : Theme.of(context).colorScheme.error,
+                    subtitle: s.valueLoss > 0
+                        ? 'Ventes ${Fmt.money(s.profit)} − pertes ${Fmt.money(s.valueLoss)}'
+                        : 'Marge ${Fmt.percent(s.marginRate)}',
                   ),
+                  KpiCard(
+                    label: 'Pertes',
+                    value: Fmt.money(s.valueLoss),
+                    icon: Icons.remove_circle_outline,
+                    color: s.valueLoss > 0 ? Theme.of(context).colorScheme.error : okColor,
+                    subtitle: s.qtyLoss > 0 ? Fmt.count(s.qtyLoss, 'article') : 'Aucune perte',
+                  ),
+                  if (_categoryId == null)
+                    KpiCard(
+                      label: 'Argent encaissé',
+                      value: Fmt.money(s.cashIn),
+                      icon: Icons.payments_outlined,
+                      subtitle: s.cashIn + 1 < s.salesAmount
+                          ? 'Une partie des ventes est à crédit'
+                          : 'Ventes et remboursements',
+                    ),
                   KpiCard(
                     label: 'Achats (entrées)',
                     value: Fmt.money(s.valueIn),
@@ -213,6 +241,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   child: CategoryPie(shares: d.stockByCategory),
                 ),
               ),
+              const SectionTitle('Achats par fournisseur'),
+              if (d.suppliers.isEmpty)
+                const Card(child: ListTile(title: Text('Aucun achat sur cette période')))
+              else
+                Card(
+                  child: Column(
+                    children: [
+                      for (final sup in d.suppliers)
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.local_shipping_outlined),
+                          title: Text(sup.category),
+                          trailing: Text(Fmt.money(sup.value), style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                    ],
+                  ),
+                ),
             ],
           ),
         );

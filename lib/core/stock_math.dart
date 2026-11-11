@@ -27,8 +27,9 @@ enum StockStatus {
 }
 
 class StockMath {
-  /// Stock final = stock initial + entrées - sorties.
-  static int finalStock(int initialStock, int qtyIn, int qtyOut) => initialStock + qtyIn - qtyOut;
+  /// Stock final = stock initial + entrées - sorties (ventes et pertes).
+  static int finalStock(int initialStock, int qtyIn, int qtyOut, [int qtyLoss = 0]) =>
+      initialStock + qtyIn - qtyOut - qtyLoss;
 
   /// Coût unitaire moyen pondéré (CUMP) :
   /// (valeur du stock initial + total des entrées) / (stock initial + quantités entrées).

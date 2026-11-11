@@ -8,6 +8,7 @@ import '../../data/shop_repository.dart';
 import '../../services/session.dart';
 import '../common.dart';
 import '../operations/movement_form_screen.dart';
+import '../sales/cart_screen.dart';
 import '../operations/movement_tile.dart';
 import 'product_form_screen.dart';
 
@@ -51,6 +52,10 @@ class ProductDetailScreen extends StatelessWidget {
               PopupMenuButton<String>(
                 onSelected: (v) => _menu(context, v, item, d.hasMovements),
                 itemBuilder: (_) => [
+                  if (!p.archived) ...[
+                    const PopupMenuItem(value: 'count', child: Text('Inventaire (compter le stock)')),
+                    if (item.stock > 0) const PopupMenuItem(value: 'loss', child: Text('Déclarer une perte')),
+                  ],
                   PopupMenuItem(value: 'archive', child: Text(p.archived ? 'Réactiver' : 'Archiver')),
                   if (!d.hasMovements) const PopupMenuItem(value: 'delete', child: Text('Supprimer')),
                 ],
@@ -114,7 +119,8 @@ class ProductDetailScreen extends StatelessWidget {
                     children: [
                       _line('Stock initial', '${p.initialStock} à ${Fmt.money(p.initialUnitCost)}'),
                       _line('Entrées', '+ ${item.qtyIn} (${Fmt.money(item.valueIn)})'),
-                      _line('Sorties', '- ${item.qtyOut}'),
+                      _line('Ventes', '- ${item.qtyOut}'),
+                      if (item.qtyLoss > 0) _line('Pertes', '- ${item.qtyLoss} (${Fmt.money(item.valueLoss)})'),
                       const Divider(),
                       _line('Prix de vente', Fmt.money(p.sellingPrice)),
                       _line('Marge unitaire au CUMP', Fmt.money(p.sellingPrice - item.cump)),
@@ -176,16 +182,68 @@ class ProductDetailScreen extends StatelessWidget {
   void _open(BuildContext context, MovementType type, Product p) => Navigator.push(
     context,
     MaterialPageRoute(
-      builder: (_) => MovementFormScreen(type: type, productId: p.id),
+      builder: (_) =>
+          type == MovementType.sale ? CartScreen(productId: p.id) : MovementFormScreen(type: type, productId: p.id),
     ),
   );
+
+  /// Inventaire physique : le commerçant compte ses articles, l'écart est corrigé.
+  Future<void> _count(BuildContext context, StockItem item) async {
+    final p = item.product;
+    final counted = await promptText(
+      context,
+      title: 'Inventaire — ${p.name}',
+      message:
+          'Stock théorique : ${Fmt.qtyUnit(item.stock, p.unit)}.\n'
+          'Comptez les articles réellement présents et saisissez le nombre.',
+      label: 'Quantité comptée',
+      initial: '${item.stock < 0 ? 0 : item.stock}',
+      keyboardType: TextInputType.number,
+      inputFormatters: intInput,
+      ok: 'Valider',
+    );
+    final n = int.tryParse(counted ?? '');
+    if (n == null || !context.mounted) return;
+    final diff = n - item.stock;
+    if (diff == 0) {
+      showSuccess(context, 'Stock juste : aucun écart');
+      return;
+    }
+    final reason = await promptText(
+      context,
+      title: diff < 0 ? 'Manque de ${Fmt.qtyUnit(-diff, p.unit)}' : 'Surplus de ${Fmt.qtyUnit(diff, p.unit)}',
+      message: diff < 0
+          ? 'Le manquant sera enregistré en perte (${Fmt.money(-diff * item.cump)} au CUMP).'
+          : 'Le surplus sera ajouté au stock au coût moyen actuel.',
+      label: 'Explication (facultatif)',
+      hint: 'ex. casse non déclarée, erreur de comptage',
+      requireValue: false,
+      ok: 'Corriger le stock',
+    );
+    if (reason == null || !context.mounted) return;
+    try {
+      await context.read<ShopRepository>().adjustStockToCount(
+        userId: context.read<Session>().userId,
+        productId: p.id!,
+        counted: n,
+        reason: reason,
+      );
+      if (context.mounted) showSuccess(context, 'Stock corrigé : ${Fmt.qtyUnit(n, p.unit)}');
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
 
   Future<void> _menu(BuildContext context, String action, StockItem item, bool hasMovements) async {
     final repo = context.read<ShopRepository>();
     final uid = context.read<Session>().userId;
     final p = item.product;
     try {
-      if (action == 'archive') {
+      if (action == 'count') {
+        await _count(context, item);
+      } else if (action == 'loss') {
+        _open(context, MovementType.loss, p);
+      } else if (action == 'archive') {
         if (!p.archived && item.stock > 0) {
           final ok = await confirm(
             context,

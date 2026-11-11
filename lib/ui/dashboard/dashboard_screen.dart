@@ -10,6 +10,8 @@ import '../charts.dart';
 import '../common.dart';
 import '../home_shell.dart';
 import '../operations/movement_form_screen.dart';
+import '../sales/cart_screen.dart';
+import '../sales/credits_screen.dart';
 import '../products/product_detail_screen.dart';
 import '../products/product_form_screen.dart';
 
@@ -20,8 +22,19 @@ class _DashboardData {
   final List<ProductRanking> top;
   final List<DateTime> days;
   final Map<DateTime, double> daily;
+  final double credit;
+  final int creditClients;
 
-  _DashboardData(this.inventory, this.today, this.month, this.top, this.days, this.daily);
+  _DashboardData(
+    this.inventory,
+    this.today,
+    this.month,
+    this.top,
+    this.days,
+    this.daily,
+    this.credit,
+    this.creditClients,
+  );
 }
 
 class DashboardScreen extends StatelessWidget {
@@ -33,6 +46,7 @@ class DashboardScreen extends StatelessWidget {
     final week = Period.of(PeriodKind.week);
     final f = week.from!;
     final days = [for (var i = 0; i < 7; i++) DateTime(f.year, f.month, f.day + i)];
+    final debts = await repo.clientDebts(userId);
     return _DashboardData(
       await repo.inventory(userId),
       await repo.periodSummary(userId, from: today.from, to: today.to),
@@ -40,6 +54,8 @@ class DashboardScreen extends StatelessWidget {
       await repo.salesRanking(userId, from: month.from, to: month.to, limit: 3),
       days,
       await repo.dailySales(userId, from: week.from!, to: week.to!),
+      debts.fold<double>(0, (s, d) => s + d.balance),
+      debts.length,
     );
   }
 
@@ -79,12 +95,25 @@ class DashboardScreen extends StatelessWidget {
             children: [
               Text('Bonjour ${user.name.split(' ').first}', style: Theme.of(context).textTheme.titleLarge),
               Text(Fmt.date(DateTime.now()), style: Theme.of(context).textTheme.bodySmall),
+              if (!user.hasRecoveryCode) ...[
+                const SizedBox(height: 8),
+                Card(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.key_outlined),
+                    title: const Text('Créez votre code de secours'),
+                    subtitle: const Text('Sans lui, un mot de passe oublié = boutique perdue.'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => HomeShell.goToTab(context, HomeShell.tabSettings),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: () => _openForm(context, MovementType.sale),
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CartScreen())),
                       icon: const Icon(Icons.point_of_sale),
                       label: const Text('Vente'),
                     ),
@@ -129,6 +158,24 @@ class DashboardScreen extends StatelessWidget {
                     color: alerts.isEmpty ? okColor : Color(critical > 0 ? user.criticalColor : user.warningColor),
                     subtitle: critical > 0 ? '${Fmt.count(critical, 'urgente')} ou en rupture' : 'Aucune urgence',
                     onTap: () => HomeShell.goToTab(context, HomeShell.tabStock),
+                  ),
+                  KpiCard(
+                    label: 'Crédits clients',
+                    value: Fmt.money(d.credit),
+                    icon: Icons.handshake_outlined,
+                    color: d.credit >= 1 ? Theme.of(context).colorScheme.error : okColor,
+                    subtitle: d.creditClients == 0
+                        ? 'Personne ne vous doit rien'
+                        : Fmt.count(d.creditClients, 'client'),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreditsScreen())),
+                  ),
+                  KpiCard(
+                    label: 'Encaissé aujourd\'hui',
+                    value: Fmt.money(d.today.cashIn),
+                    icon: Icons.payments_outlined,
+                    subtitle: d.today.valueLoss > 0
+                        ? 'Pertes : ${Fmt.money(d.today.valueLoss)}'
+                        : 'Ventes + remboursements',
                   ),
                 ],
               ),

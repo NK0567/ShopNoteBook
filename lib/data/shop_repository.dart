@@ -288,7 +288,9 @@ class ShopRepository extends ChangeNotifier {
       COALESCE(SUM(CASE WHEN m.type = 'IN'  THEN m.quantity * m.unitPrice END), 0) AS valueIn,
       COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity END), 0) AS qtyOut,
       COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity * m.unitPrice END), 0) AS salesAmount,
-      COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity * (m.unitPrice - m.unitCost) END), 0) AS profit
+      COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity * (m.unitPrice - m.unitCost) END), 0) AS profit,
+      COALESCE(SUM(CASE WHEN m.type = 'LOSS' THEN m.quantity END), 0) AS qtyLoss,
+      COALESCE(SUM(CASE WHEN m.type = 'LOSS' THEN m.quantity * m.unitCost END), 0) AS valueLoss
     FROM products p
     LEFT JOIN categories c ON c.id = p.categoryId
     LEFT JOIN movements m ON m.productId = p.id AND m.cancelled = 0
@@ -302,6 +304,8 @@ class ShopRepository extends ChangeNotifier {
     qtyOut: (r['qtyOut'] as num).toInt(),
     salesAmount: (r['salesAmount'] as num).toDouble(),
     profit: (r['profit'] as num).toDouble(),
+    qtyLoss: (r['qtyLoss'] as num).toInt(),
+    valueLoss: (r['valueLoss'] as num).toDouble(),
   );
 
   Future<List<StockItem>> inventory(int userId, {bool includeArchived = false}) async {
@@ -325,8 +329,10 @@ class ShopRepository extends ChangeNotifier {
   // Mouvements (feuilles "Opération", "Entrée", "Sortie")
   // ======================================================================
 
-  /// Enregistre une entrée (achat fournisseur) ou une sortie (vente).
-  /// Une sortie est refusée si le stock disponible est insuffisant.
+  /// Enregistre un mouvement d'un seul produit :
+  /// - entrée (achat fournisseur) au coût d'achat saisi ;
+  /// - perte (casse, vol, périmé...) valorisée au CUMP ;
+  /// - vente : crée un ticket d'une ligne, payé comptant (voir [recordSale]).
   Future<Movement> recordMovement({
     required int userId,
     required MovementType type,
@@ -337,33 +343,34 @@ class ShopRepository extends ChangeNotifier {
     String? partner,
     String? note,
   }) async {
-    if (quantity <= 0) throw const BusinessException('La quantité doit être supérieure à 0');
+    if (type == MovementType.sale) {
+      final item = await stockItem(userId, productId);
+      if (item == null) throw const BusinessException('Produit introuvable');
+      final detail = await recordSale(
+        userId: userId,
+        lines: [SaleLine(item: item, quantity: quantity, unitPrice: unitPrice)],
+        date: date,
+        client: partner,
+        paid: quantity * unitPrice,
+        note: note,
+      );
+      return detail.lines.first;
+    }
+    _checkQuantityAndDate(quantity, date);
     if (unitPrice < 0) throw const BusinessException('Le prix ne peut pas être négatif');
     if (type == MovementType.entry && unitPrice == 0) {
       throw const BusinessException('Le coût d\'achat doit être supérieur à 0');
     }
-    if (date.isAfter(DateTime.now().add(const Duration(minutes: 5)))) {
-      throw const BusinessException('La date ne peut pas être dans le futur');
+    if (type == MovementType.loss && (note == null || note.trim().length < 3)) {
+      throw const BusinessException('Indiquez la raison de la perte');
     }
 
     final id = await db.transaction<int>((txn) async {
-      final item = await stockItem(userId, productId, executor: txn);
-      if (item == null) throw const BusinessException('Produit introuvable');
-      if (item.product.archived) throw const BusinessException('Ce produit est archivé');
-      if (type == MovementType.sale && quantity > item.stock) {
-        throw BusinessException(
-          'Stock insuffisant pour ${item.product.name} : ${Fmt.qtyUnit(item.stock < 0 ? 0 : item.stock, item.product.unit)} en stock',
-        );
-      }
-
-      final next = await txn.rawQuery(
-        'SELECT COALESCE(MAX(number), 0) + 1 AS n FROM movements WHERE userId = ? AND type = ?',
-        [userId, type.code],
-      );
-      final number = (next.first['n'] as num).toInt();
-      // Pour une vente, on fige le CUMP du moment : le bénéfice ne change plus ensuite.
-      final unitCost = type == MovementType.sale ? item.cump : unitPrice;
-
+      final item = await _activeItem(txn, userId, productId);
+      if (type == MovementType.loss) _checkStock(item, quantity);
+      final number = await _nextNumber(txn, 'movements', userId, type: type.code);
+      // Une perte est valorisée au CUMP du moment (elle ne modifie pas le CUMP).
+      final cost = type == MovementType.loss ? item.cump : unitPrice;
       final newId = await txn.insert('movements', {
         'userId': userId,
         'productId': productId,
@@ -371,8 +378,8 @@ class ShopRepository extends ChangeNotifier {
         'number': number,
         'date': iso(date),
         'quantity': quantity,
-        'unitPrice': unitPrice,
-        'unitCost': unitCost,
+        'unitPrice': cost,
+        'unitCost': cost,
         'partner': _clean(partner),
         'note': _clean(note),
         'createdAt': _now(),
@@ -380,8 +387,8 @@ class ShopRepository extends ChangeNotifier {
       await audit(
         userId,
         type.label,
-        '${type == MovementType.entry ? 'E' : 'S'}-$number ${item.product.reference} '
-        'x$quantity à ${unitPrice.round()} FCFA',
+        '${type.prefix}-$number ${item.product.reference} x$quantity à ${cost.round()} FCFA'
+        '${type == MovementType.loss ? ' (${note!.trim()})' : ''}',
         executor: txn,
       );
       return newId;
@@ -390,16 +397,182 @@ class ShopRepository extends ChangeNotifier {
     return (await movements(userId, movementId: id)).first;
   }
 
+  /// Vente d'un ou plusieurs articles en une seule transaction (ticket de caisse).
+  /// [paid] = somme encaissée maintenant. Si elle est inférieure au total, le reste
+  /// devient un crédit au nom du client (obligatoire dans ce cas).
+  Future<TicketDetail> recordSale({
+    required int userId,
+    required List<SaleLine> lines,
+    required DateTime date,
+    String? client,
+    required double paid,
+    String method = 'Espèces',
+    String? note,
+  }) async {
+    if (lines.isEmpty) throw const BusinessException('Le panier est vide');
+    for (final l in lines) {
+      _checkQuantityAndDate(l.quantity, date);
+      if (l.unitPrice < 0) throw const BusinessException('Le prix ne peut pas être négatif');
+    }
+    final total = lines.fold<double>(0, (s, l) => s + l.total);
+    if (paid < 0) throw const BusinessException('Le montant encaissé ne peut pas être négatif');
+    final cashed = paid > total ? total : paid;
+    final who = _clean(client);
+    if (total - cashed >= 1 && who == null) {
+      throw const BusinessException('Vente à crédit : indiquez le nom du client');
+    }
+
+    final ticketId = await db.transaction<int>((txn) async {
+      // Contrôle du stock produit par produit (un produit peut apparaître sur plusieurs lignes).
+      final wanted = <int, int>{};
+      for (final l in lines) {
+        wanted[l.item.product.id!] = (wanted[l.item.product.id!] ?? 0) + l.quantity;
+      }
+      final items = <int, StockItem>{};
+      for (final e in wanted.entries) {
+        final item = await _activeItem(txn, userId, e.key);
+        _checkStock(item, e.value);
+        items[e.key] = item;
+      }
+
+      final ticketNumber = await _nextNumber(txn, 'tickets', userId);
+      final tId = await txn.insert('tickets', {
+        'userId': userId,
+        'number': ticketNumber,
+        'date': iso(date),
+        'client': who,
+        'note': _clean(note),
+        'createdAt': _now(),
+      });
+      var number = await _nextNumber(txn, 'movements', userId, type: 'OUT');
+      for (final l in lines) {
+        final item = items[l.item.product.id!]!;
+        await txn.insert('movements', {
+          'userId': userId,
+          'productId': item.product.id,
+          'type': 'OUT',
+          'number': number++,
+          'date': iso(date),
+          'quantity': l.quantity,
+          'unitPrice': l.unitPrice,
+          // CUMP figé au moment de la vente : le bénéfice ne change plus ensuite.
+          'unitCost': item.cump,
+          'partner': who,
+          'note': _clean(note),
+          'ticketId': tId,
+          'createdAt': _now(),
+        });
+      }
+      if (cashed > 0) {
+        await txn.insert('payments', {
+          'userId': userId,
+          'ticketId': tId,
+          'amount': cashed,
+          'date': iso(date),
+          'method': method,
+          'createdAt': _now(),
+        });
+      }
+      final credit = total - cashed;
+      await audit(
+        userId,
+        'Vente',
+        'T-$ticketNumber : ${Fmt.count(lines.length, 'article')}, ${total.round()} FCFA'
+            '${credit >= 1 ? ', crédit ${credit.round()} FCFA ($who)' : ''}',
+        executor: txn,
+      );
+      return tId;
+    });
+    _changed();
+    return (await ticketDetail(userId, ticketId))!;
+  }
+
+  /// Inventaire physique : aligne le stock sur la quantité comptée.
+  /// Manquant → perte ; surplus → entrée au CUMP (le CUMP ne bouge pas).
+  /// Retourne le mouvement créé, ou null si le stock était déjà juste.
+  Future<Movement?> adjustStockToCount({
+    required int userId,
+    required int productId,
+    required int counted,
+    required String reason,
+  }) async {
+    if (counted < 0) throw const BusinessException('La quantité comptée ne peut pas être négative');
+    final item = await stockItem(userId, productId);
+    if (item == null) throw const BusinessException('Produit introuvable');
+    final diff = counted - item.stock;
+    if (diff == 0) return null;
+    final why = reason.trim().isEmpty ? 'écart constaté' : reason.trim();
+    if (diff < 0) {
+      return recordMovement(
+        userId: userId,
+        type: MovementType.loss,
+        productId: productId,
+        quantity: -diff,
+        unitPrice: item.cump,
+        date: DateTime.now(),
+        note: 'Inventaire : $why',
+      );
+    }
+    final cost = item.cump > 0 ? item.cump : item.product.initialUnitCost;
+    if (cost <= 0) {
+      throw const BusinessException('Coût inconnu pour ce produit : faites plutôt une entrée avec son coût d\'achat');
+    }
+    return recordMovement(
+      userId: userId,
+      type: MovementType.entry,
+      productId: productId,
+      quantity: diff,
+      unitPrice: cost,
+      date: DateTime.now(),
+      partner: 'Inventaire',
+      note: 'Surplus d\'inventaire : $why',
+    );
+  }
+
+  void _checkQuantityAndDate(int quantity, DateTime date) {
+    if (quantity <= 0) throw const BusinessException('La quantité doit être supérieure à 0');
+    if (date.isAfter(DateTime.now().add(const Duration(minutes: 5)))) {
+      throw const BusinessException('La date ne peut pas être dans le futur');
+    }
+  }
+
+  Future<StockItem> _activeItem(DatabaseExecutor txn, int userId, int productId) async {
+    final item = await stockItem(userId, productId, executor: txn);
+    if (item == null) throw const BusinessException('Produit introuvable');
+    if (item.product.archived) throw BusinessException('${item.product.name} est archivé');
+    return item;
+  }
+
+  void _checkStock(StockItem item, int quantity) {
+    if (quantity > item.stock) {
+      throw BusinessException(
+        'Stock insuffisant pour ${item.product.name} : '
+        '${Fmt.qtyUnit(item.stock < 0 ? 0 : item.stock, item.product.unit)} en stock',
+      );
+    }
+  }
+
+  Future<int> _nextNumber(DatabaseExecutor txn, String table, int userId, {String? type}) async {
+    final r = await txn.rawQuery(
+      'SELECT COALESCE(MAX(number), 0) + 1 AS n FROM $table WHERE userId = ?${type != null ? ' AND type = ?' : ''}',
+      [userId, if (type != null) type],
+    );
+    return (r.first['n'] as num).toInt();
+  }
+
   /// Annule un mouvement (il reste visible, barré, dans l'historique).
-  Future<void> cancelMovement(int userId, int movementId, String reason) async {
+  /// Retourne la somme à rendre au client si la ligne annulée était déjà payée (sinon 0).
+  Future<double> cancelMovement(int userId, int movementId, String reason) async {
     final why = reason.trim();
     if (why.length < 3) throw const BusinessException('Indiquez le motif de l\'annulation');
+    var refund = 0.0;
     await db.transaction((txn) async {
       final rows = await txn.query('movements', where: 'id = ? AND userId = ?', whereArgs: [movementId, userId]);
       if (rows.isEmpty) throw const BusinessException('Opération introuvable');
       final m = rows.first;
       if ((m['cancelled'] as int) == 1) throw const BusinessException('Opération déjà annulée');
-      if (m['type'] == 'IN') {
+      final type = MovementType.fromCode(m['type'] as String);
+      if (type == MovementType.entry) {
         final item = await stockItem(userId, m['productId'] as int, executor: txn);
         final qty = m['quantity'] as int;
         if (item != null && item.stock - qty < 0) {
@@ -414,19 +587,41 @@ class ShopRepository extends ChangeNotifier {
         where: 'id = ?',
         whereArgs: [movementId],
       );
-      await audit(
-        userId,
-        'Annulation',
-        '${m['type'] == 'IN' ? 'E' : 'S'}-${m['number']} annulée : $why',
-        executor: txn,
-      );
+      await audit(userId, 'Annulation', '${type.prefix}-${m['number']} annulée : $why', executor: txn);
+
+      // Ligne d'un ticket déjà payé : le trop-perçu est rendu au client.
+      final ticketId = m['ticketId'] as int?;
+      if (ticketId != null) {
+        final t = await _ticketRow(txn, userId, ticketId);
+        final overpaid = t.paid - t.total;
+        if (overpaid >= 1) {
+          await txn.insert('payments', {
+            'userId': userId,
+            'ticketId': ticketId,
+            'amount': -overpaid,
+            'date': _now(),
+            'method': 'Remboursement',
+            'note': 'Annulation ${type.prefix}-${m['number']}',
+            'createdAt': _now(),
+          });
+          await audit(
+            userId,
+            'Remboursement',
+            '${t.code} : ${overpaid.round()} FCFA rendus au client${t.client != null ? ' (${t.client})' : ''}',
+            executor: txn,
+          );
+          refund = overpaid;
+        }
+      }
     });
     _changed();
+    return refund;
   }
 
   Future<List<Movement>> movements(
     int userId, {
     int? movementId,
+    int? ticketId,
     MovementType? type,
     DateTime? from,
     DateTime? to,
@@ -441,6 +636,10 @@ class ShopRepository extends ChangeNotifier {
     if (movementId != null) {
       where.add('m.id = ?');
       args.add(movementId);
+    }
+    if (ticketId != null) {
+      where.add('m.ticketId = ?');
+      args.add(ticketId);
     }
     if (type != null) {
       where.add('m.type = ?');
@@ -469,10 +668,11 @@ class ShopRepository extends ChangeNotifier {
       args.addAll([like, like, like]);
     }
     final rows = await db.rawQuery('''
-      SELECT m.*, p.reference, p.name AS productName, p.unit, c.name AS categoryName
+      SELECT m.*, p.reference, p.name AS productName, p.unit, c.name AS categoryName, t.number AS ticketNumber
       FROM movements m
       JOIN products p ON p.id = m.productId
       LEFT JOIN categories c ON c.id = p.categoryId
+      LEFT JOIN tickets t ON t.id = m.ticketId
       WHERE ${where.join(' AND ')}
       ORDER BY m.date DESC, m.id DESC
       ${limit != null ? 'LIMIT $limit' : ''}
@@ -524,10 +724,32 @@ class ShopRepository extends ChangeNotifier {
         COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity END), 0) AS qtyOut,
         COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity * m.unitPrice END), 0) AS salesAmount,
         COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN m.quantity * (m.unitPrice - m.unitCost) END), 0) AS profit,
-        COALESCE(SUM(CASE WHEN m.type = 'OUT' THEN 1 END), 0) AS salesCount
+        COUNT(DISTINCT CASE WHEN m.type = 'OUT' THEN COALESCE(m.ticketId, -m.id) END) AS salesCount,
+        COALESCE(SUM(CASE WHEN m.type = 'LOSS' THEN m.quantity END), 0) AS qtyLoss,
+        COALESCE(SUM(CASE WHEN m.type = 'LOSS' THEN m.quantity * m.unitCost END), 0) AS valueLoss,
+        COALESCE(SUM(CASE WHEN m.type = 'OUT' AND m.ticketId IS NULL THEN m.quantity * m.unitPrice END), 0) AS legacyCash
       FROM movements m JOIN products p ON p.id = m.productId
       WHERE m.userId = ? AND m.cancelled = 0 $filter
     ''', args)).first;
+    // Encaissements de la période (toutes catégories : un paiement couvre tout un ticket).
+    var cashIn = (r['legacyCash'] as num).toDouble();
+    if (categoryId == null) {
+      final pArgs = <Object?>[userId];
+      final pFilter = StringBuffer();
+      if (from != null) {
+        pFilter.write(' AND date >= ?');
+        pArgs.add(iso(from));
+      }
+      if (to != null) {
+        pFilter.write(' AND date < ?');
+        pArgs.add(iso(to));
+      }
+      final pr = await db.rawQuery(
+        'SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE userId = ? AND cancelled = 0$pFilter',
+        pArgs,
+      );
+      cashIn += (pr.first['s'] as num).toDouble();
+    }
     return PeriodSummary(
       qtyIn: (r['qtyIn'] as num).toInt(),
       valueIn: (r['valueIn'] as num).toDouble(),
@@ -535,6 +757,9 @@ class ShopRepository extends ChangeNotifier {
       salesAmount: (r['salesAmount'] as num).toDouble(),
       profit: (r['profit'] as num).toDouble(),
       salesCount: (r['salesCount'] as num).toInt(),
+      qtyLoss: (r['qtyLoss'] as num).toInt(),
+      valueLoss: (r['valueLoss'] as num).toDouble(),
+      cashIn: cashIn,
     );
   }
 
@@ -597,6 +822,379 @@ class ShopRepository extends ChangeNotifier {
       [userId, iso(from), iso(to)],
     );
     return {for (final r in rows) DateTime.parse(r['day'] as String): (r['total'] as num).toDouble()};
+  }
+
+  // ======================================================================
+  // Tickets de caisse, encaissements et crédits clients
+  // ======================================================================
+
+  static const _ticketSql = '''
+    SELECT t.*,
+      COALESCE((SELECT SUM(m.quantity * m.unitPrice) FROM movements m
+                WHERE m.ticketId = t.id AND m.cancelled = 0), 0) AS total,
+      COALESCE((SELECT SUM(p.amount) FROM payments p
+                WHERE p.ticketId = t.id AND p.cancelled = 0), 0) AS paid,
+      (SELECT COUNT(*) FROM movements m WHERE m.ticketId = t.id AND m.cancelled = 0) AS lineCount
+    FROM tickets t
+  ''';
+
+  Future<Ticket> _ticketRow(DatabaseExecutor ex, int userId, int ticketId) async {
+    final rows = await ex.rawQuery('$_ticketSql WHERE t.userId = ? AND t.id = ?', [userId, ticketId]);
+    if (rows.isEmpty) throw const BusinessException('Ticket introuvable');
+    return Ticket.fromMap(rows.first);
+  }
+
+  Future<TicketDetail?> ticketDetail(int userId, int ticketId) async {
+    final rows = await db.rawQuery('$_ticketSql WHERE t.userId = ? AND t.id = ?', [userId, ticketId]);
+    if (rows.isEmpty) return null;
+    final lines = await movements(userId, ticketId: ticketId);
+    final pays = await db.rawQuery(
+      'SELECT p.*, t.number AS ticketNumber FROM payments p JOIN tickets t ON t.id = p.ticketId '
+      'WHERE p.userId = ? AND p.ticketId = ? ORDER BY p.date, p.id',
+      [userId, ticketId],
+    );
+    return TicketDetail(Ticket.fromMap(rows.first), lines.reversed.toList(), pays.map(Payment.fromMap).toList());
+  }
+
+  /// Derniers tickets, du plus récent au plus ancien.
+  Future<List<Ticket>> tickets(int userId, {int limit = 200, String? search}) async {
+    final q = search?.trim() ?? '';
+    final rows = await db.rawQuery(
+      '$_ticketSql WHERE t.userId = ? ${q.isEmpty ? '' : 'AND (t.client LIKE ? OR t.number = ?)'} '
+      'ORDER BY t.date DESC, t.id DESC LIMIT $limit',
+      [userId, if (q.isNotEmpty) '%$q%', if (q.isNotEmpty) int.tryParse(q.replaceAll(RegExp(r'\D'), '')) ?? -1],
+    );
+    return rows.map(Ticket.fromMap).toList();
+  }
+
+  /// Tickets non soldés (crédits), du plus ancien au plus récent.
+  Future<List<Ticket>> openTickets(int userId, {String? client}) async {
+    final rows = await db.rawQuery(
+      '$_ticketSql WHERE t.userId = ? ${client != null ? 'AND t.client = ? COLLATE NOCASE' : ''} '
+      'ORDER BY t.date, t.id',
+      [userId, if (client != null) client],
+    );
+    return rows.map(Ticket.fromMap).where((t) => t.isCredit).toList();
+  }
+
+  /// Ce que chaque client doit encore, du plus gros montant au plus petit.
+  Future<List<ClientDebt>> clientDebts(int userId) async {
+    final open = await openTickets(userId);
+    final byClient = <String, List<Ticket>>{};
+    for (final t in open) {
+      final key = (t.client ?? 'Client inconnu').trim();
+      byClient.putIfAbsent(key.toLowerCase(), () => []).add(t);
+    }
+    final list =
+        byClient.values
+            .map(
+              (ts) => ClientDebt(
+                client: ts.first.client ?? 'Client inconnu',
+                balance: ts.fold(0, (s, t) => s + t.balance),
+                ticketCount: ts.length,
+                oldest: ts.first.date,
+              ),
+            )
+            .toList()
+          ..sort((a, b) => b.balance.compareTo(a.balance));
+    return list;
+  }
+
+  /// Encaisse un paiement sur un ticket précis (acompte ou solde).
+  Future<void> addPayment(
+    int userId,
+    int ticketId,
+    double amount, {
+    String method = 'Espèces',
+    String? note,
+    DateTime? date,
+  }) async {
+    if (amount <= 0) throw const BusinessException('Le montant doit être supérieur à 0');
+    await db.transaction((txn) async {
+      final t = await _ticketRow(txn, userId, ticketId);
+      if (amount > t.balance + 0.5) {
+        throw BusinessException('Le client ne doit que ${Fmt.money(t.balance < 0 ? 0 : t.balance)} sur ce ticket');
+      }
+      await txn.insert('payments', {
+        'userId': userId,
+        'ticketId': ticketId,
+        'amount': amount,
+        'date': iso(date ?? DateTime.now()),
+        'method': method,
+        'note': _clean(note),
+        'createdAt': _now(),
+      });
+      await audit(
+        userId,
+        'Encaissement',
+        '${t.code} : ${amount.round()} FCFA ($method)${t.client != null ? ' — ${t.client}' : ''}',
+        executor: txn,
+      );
+    });
+    _changed();
+  }
+
+  /// Remboursement d'un client : la somme est répartie sur ses tickets, du plus ancien au plus récent.
+  Future<void> payClientDebt(int userId, String client, double amount, {String method = 'Espèces'}) async {
+    if (amount <= 0) throw const BusinessException('Le montant doit être supérieur à 0');
+    await db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        '$_ticketSql WHERE t.userId = ? AND t.client = ? COLLATE NOCASE ORDER BY t.date, t.id',
+        [userId, client],
+      );
+      final open = rows.map(Ticket.fromMap).where((t) => t.isCredit).toList();
+      final due = open.fold<double>(0, (s, t) => s + t.balance);
+      if (open.isEmpty) throw BusinessException('$client n\'a aucun crédit en cours');
+      if (amount > due + 0.5) throw BusinessException('$client ne doit que ${Fmt.money(due)}');
+      var rest = amount;
+      for (final t in open) {
+        if (rest <= 0) break;
+        final part = rest < t.balance ? rest : t.balance;
+        await txn.insert('payments', {
+          'userId': userId,
+          'ticketId': t.id,
+          'amount': part,
+          'date': _now(),
+          'method': method,
+          'createdAt': _now(),
+        });
+        rest -= part;
+      }
+      await audit(userId, 'Encaissement', '$client rembourse ${amount.round()} FCFA ($method)', executor: txn);
+    });
+    _changed();
+  }
+
+  /// Annule un encaissement saisi par erreur (il reste visible dans le ticket).
+  Future<void> cancelPayment(int userId, int paymentId) async {
+    await db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        'SELECT p.*, t.number AS ticketNumber FROM payments p JOIN tickets t ON t.id = p.ticketId '
+        'WHERE p.id = ? AND p.userId = ?',
+        [paymentId, userId],
+      );
+      if (rows.isEmpty) throw const BusinessException('Encaissement introuvable');
+      final p = Payment.fromMap(rows.first);
+      if (p.cancelled) throw const BusinessException('Encaissement déjà annulé');
+      await txn.update('payments', {'cancelled': 1}, where: 'id = ?', whereArgs: [paymentId]);
+      await audit(
+        userId,
+        'Annulation',
+        'Encaissement de ${p.amount.round()} FCFA annulé (T-${p.ticketNumber})',
+        executor: txn,
+      );
+    });
+    _changed();
+  }
+
+  /// Total des crédits clients en cours.
+  Future<double> totalCredit(int userId) async => (await openTickets(userId)).fold<double>(0, (s, t) => s + t.balance);
+
+  /// Clients déjà servis (auto-complétion).
+  Future<List<String>> clients(int userId) async {
+    final rows = await db.rawQuery(
+      '''
+      SELECT client, MAX(date) AS last FROM tickets
+      WHERE userId = ? AND client IS NOT NULL AND client <> ''
+      GROUP BY client COLLATE NOCASE ORDER BY last DESC LIMIT 100
+    ''',
+      [userId],
+    );
+    return rows.map((r) => r['client'] as String).toList();
+  }
+
+  /// Achats par fournisseur sur une période (comparaison des fournisseurs).
+  Future<List<CategoryShare>> purchasesBySupplier(int userId, {DateTime? from, DateTime? to}) async {
+    final args = <Object?>[userId];
+    final filter = _periodFilter(args, from, to, null);
+    final rows = await db.rawQuery('''
+      SELECT COALESCE(NULLIF(TRIM(m.partner), ''), 'Fournisseur non précisé') AS supplier,
+             SUM(m.quantity * m.unitPrice) AS total
+      FROM movements m JOIN products p ON p.id = m.productId
+      WHERE m.userId = ? AND m.type = 'IN' AND m.cancelled = 0
+        AND COALESCE(m.partner, '') <> 'Inventaire' $filter
+      GROUP BY supplier COLLATE NOCASE ORDER BY total DESC
+    ''', args);
+    return rows.map((r) => CategoryShare(r['supplier'] as String, (r['total'] as num).toDouble())).toList();
+  }
+
+  // ======================================================================
+  // Code de secours (mot de passe oublié)
+  // ======================================================================
+
+  Future<void> setRecoveryHash(int userId, String hash) =>
+      db.update('users', {'recoveryHash': hash}, where: 'id = ?', whereArgs: [userId]);
+
+  // ======================================================================
+  // Sauvegarde / restauration
+  // ======================================================================
+
+  static const backupFormat = 'shopbook-backup';
+  static const backupVersion = 1;
+
+  /// Exporte toutes les données de la boutique (sans le mot de passe).
+  Future<Map<String, Object?>> exportData(int userId) async {
+    final user = await findUserRowById(userId);
+    if (user == null) throw const BusinessException('Compte introuvable');
+    Future<List<Map<String, Object?>>> all(String table) =>
+        db.query(table, where: 'userId = ?', whereArgs: [userId], orderBy: 'id');
+    return {
+      'format': backupFormat,
+      'version': backupVersion,
+      'exportedAt': _now(),
+      'shop': {
+        'name': user['name'],
+        'businessName': user['businessName'],
+        'defaultAlertThreshold': user['defaultAlertThreshold'],
+        'warningColor': user['warningColor'],
+        'criticalColor': user['criticalColor'],
+      },
+      'categories': await all('categories'),
+      'products': await all('products'),
+      'tickets': await all('tickets'),
+      'movements': await all('movements'),
+      'payments': await all('payments'),
+    };
+  }
+
+  /// Remplace les données de la boutique par celles d'une sauvegarde.
+  /// Les identifiants sont renumérotés ; l'historique est conservé à l'identique.
+  Future<void> importData(int userId, Map<String, Object?> data) async {
+    if (data['format'] != backupFormat || data['version'] is! int || (data['version'] as int) > backupVersion) {
+      throw const BusinessException('Ce fichier n\'est pas une sauvegarde ShopBook valide');
+    }
+    List<Map<String, Object?>> list(String key) {
+      final v = data[key];
+      if (v is! List) throw BusinessException('Sauvegarde incomplète ($key manquant)');
+      return v.cast<Map<String, Object?>>();
+    }
+
+    final categories = list('categories');
+    final products = list('products');
+    final tickets = list('tickets');
+    final movements = list('movements');
+    final payments = list('payments');
+
+    await db.transaction((txn) async {
+      for (final t in ['payments', 'movements', 'tickets', 'products', 'categories']) {
+        await txn.delete(t, where: 'userId = ?', whereArgs: [userId]);
+      }
+      Map<String, Object?> strip(Map<String, Object?> row, List<String> drop) =>
+          Map.of(row)..removeWhere((k, _) => drop.contains(k));
+
+      final catIds = <Object?, int>{};
+      for (final c in categories) {
+        catIds[c['id']] = await txn.insert('categories', {
+          ...strip(c, ['id']),
+          'userId': userId,
+        });
+      }
+      final productIds = <Object?, int>{};
+      for (final p in products) {
+        productIds[p['id']] = await txn.insert('products', {
+          ...strip(p, ['id']),
+          'userId': userId,
+          'categoryId': p['categoryId'] == null ? null : catIds[p['categoryId']],
+        });
+      }
+      final ticketIds = <Object?, int>{};
+      for (final t in tickets) {
+        ticketIds[t['id']] = await txn.insert('tickets', {
+          ...strip(t, ['id']),
+          'userId': userId,
+        });
+      }
+      for (final m in movements) {
+        final pid = productIds[m['productId']];
+        if (pid == null) throw const BusinessException('Sauvegarde corrompue : produit manquant');
+        await txn.insert('movements', {
+          ...strip(m, ['id']),
+          'userId': userId,
+          'productId': pid,
+          'ticketId': m['ticketId'] == null ? null : ticketIds[m['ticketId']],
+        });
+      }
+      for (final p in payments) {
+        final tid = ticketIds[p['ticketId']];
+        if (tid == null) throw const BusinessException('Sauvegarde corrompue : ticket manquant');
+        await txn.insert('payments', {
+          ...strip(p, ['id']),
+          'userId': userId,
+          'ticketId': tid,
+        });
+      }
+      await audit(
+        userId,
+        'Sauvegarde',
+        'Restauration : ${Fmt.count(products.length, 'produit')}, ${Fmt.count(movements.length, 'opération')}',
+        executor: txn,
+      );
+    });
+    _changed();
+  }
+
+  /// Export CSV (séparateur « ; », lisible directement par Excel en français).
+  Future<String> inventoryCsv(int userId) async {
+    final items = await inventory(userId, includeArchived: true);
+    final b = StringBuffer(
+      'Référence;Désignation;Catégorie;Unité;Seuil;Stock initial;Entrées;Sorties;Pertes;Stock final;CUMP;Valeur;Prix de vente;Statut;Archivé\n',
+    );
+    for (final i in items) {
+      b.writeln(
+        [
+          i.product.reference,
+          i.product.name,
+          i.categoryName ?? '',
+          i.product.unit,
+          i.product.alertThreshold,
+          i.product.initialStock,
+          i.qtyIn,
+          i.qtyOut,
+          i.qtyLoss,
+          i.stock,
+          i.cump.round(),
+          i.stockValue.round(),
+          i.product.sellingPrice.round(),
+          i.status.label,
+          i.product.archived ? 'oui' : 'non',
+        ].map(_csv).join(';'),
+      );
+    }
+    return b.toString();
+  }
+
+  Future<String> movementsCsv(int userId, {DateTime? from, DateTime? to}) async {
+    final list = await movements(userId, from: from, to: to);
+    final b = StringBuffer(
+      'N°;Type;Date;Référence;Désignation;Quantité;Prix unitaire;Total;CUMP;Bénéfice;Client/Fournisseur;Ticket;Note;Annulée;Motif\n',
+    );
+    for (final m in list.reversed) {
+      b.writeln(
+        [
+          m.code,
+          m.type.label,
+          _isoFmt.format(m.date).replaceFirst('T', ' '),
+          m.productReference,
+          m.productName,
+          m.quantity,
+          m.unitPrice.round(),
+          m.total.round(),
+          m.unitCost.round(),
+          m.profit.round(),
+          m.partner ?? '',
+          m.ticketNumber == null ? '' : 'T-${m.ticketNumber}',
+          m.note ?? '',
+          m.cancelled ? 'oui' : 'non',
+          m.cancelReason ?? '',
+        ].map(_csv).join(';'),
+      );
+    }
+    return b.toString();
+  }
+
+  static String _csv(Object? v) {
+    final s = '${v ?? ''}';
+    return s.contains(RegExp('[;"\n]')) ? '"${s.replaceAll('"', '""')}"' : s;
   }
 
   static List<CategoryShare> stockValueByCategory(List<StockItem> items) {

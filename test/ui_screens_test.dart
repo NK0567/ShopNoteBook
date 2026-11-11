@@ -96,6 +96,10 @@ void main() {
         await shot('02_inscription');
         await back();
         await settle();
+        await tester.tap(find.text('Mot de passe oublié ?'));
+        await shot('02b_mot_de_passe_oublie');
+        await back();
+        await settle();
 
         // Données réalistes : noms longs, gros montants, catégories multiples.
         await tester.runAsync(() async {
@@ -157,6 +161,25 @@ void main() {
             date: DateTime.now(),
           );
           await repo.cancelMovement(uid, s.id, 'Erreur de saisie');
+          // Vente à crédit et perte, pour les écrans Crédits / Tickets / Rapports.
+          final radio = (await repo.inventory(uid)).firstWhere((i) => i.product.reference == 'RADIO');
+          await repo.recordSale(
+            userId: uid,
+            lines: [SaleLine(item: radio, quantity: 2, unitPrice: 22000)],
+            date: DateTime.now().subtract(const Duration(days: 12)),
+            client: 'Mme Ngo Bassa',
+            paid: 10000,
+            method: 'Orange Money',
+          );
+          await repo.recordMovement(
+            userId: uid,
+            type: MovementType.loss,
+            productId: c,
+            quantity: 2,
+            unitPrice: 0,
+            date: DateTime.now(),
+            note: 'Périmé',
+          );
         });
         await shot('03_accueil');
 
@@ -189,18 +212,43 @@ void main() {
         await settle();
 
         await tester.tap(find.widgetWithText(FilledButton, 'Vente'));
-        await shot('10_formulaire_vente');
-        await tester.tap(find.text('Rechercher par nom ou référence'));
+        await shot('10_panier_vide');
+        await tester.tap(find.widgetWithText(FilledButton, 'Ajouter').first);
         await shot('11_choix_produit');
         await tester.tap(find.text('Radio FM'));
+        await shot('11b_quantite_prix');
+        await tester.tap(find.widgetWithText(FilledButton, 'Ajouter').last);
         await settle();
-        await tester.enterText(find.widgetWithText(TextFormField, 'Quantité *'), '2');
-        await shot('12_vente_remplie');
+        await tester.enterText(find.widgetWithText(TextField, 'Montant reçu du client'), '20000');
+        await shot('12_panier_credit');
         await back();
         await settle();
 
         await tester.tap(find.widgetWithText(FilledButton, 'Entrée'));
         await shot('13_formulaire_entree');
+        await back();
+        await settle();
+
+        await tester.tap(find.widgetWithText(OutlinedButton, 'Perte'));
+        await shot('13b_perte');
+        await back();
+        await settle();
+
+        await tester.tap(find.widgetWithText(OutlinedButton, 'Crédits'));
+        await shot('13c_credits');
+        await tester.tap(find.text('Mme Ngo Bassa').first);
+        await shot('13d_credit_client');
+        await back();
+        await settle();
+        await back();
+        await settle();
+
+        await tester.tap(find.byTooltip('Tickets de caisse'));
+        await shot('13e_tickets');
+        await tester.tap(find.byType(ListTile).first);
+        await shot('13f_ticket');
+        await back();
+        await settle();
         await back();
         await settle();
 

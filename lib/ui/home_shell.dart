@@ -20,6 +20,7 @@ class HomeShell extends StatefulWidget {
 
   static const int tabStock = 1;
   static const int tabOperations = 2;
+  static const int tabSettings = 4;
 
   @override
   State<HomeShell> createState() => _HomeShellState();

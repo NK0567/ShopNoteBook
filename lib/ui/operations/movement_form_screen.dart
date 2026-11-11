@@ -7,12 +7,18 @@ import '../../data/models.dart';
 import '../../data/shop_repository.dart';
 import '../../services/session.dart';
 import '../common.dart';
+import '../product_picker.dart';
 
-/// Saisie d'une entrée (achat fournisseur) ou d'une sortie (vente) —
+/// Motifs de perte proposés (le commerçant peut aussi écrire le sien).
+const lossReasons = ['Casse', 'Périmé', 'Vol', 'Consommation personnelle', 'Cadeau / échantillon', 'Erreur de stock'];
+
+/// Saisie d'une entrée (achat fournisseur) ou d'une perte (casse, vol, périmé...) —
 /// équivalent de la feuille "Opération" des classeurs, avec les contrôles
 /// qui y manquaient (référence existante, stock suffisant, date valide).
+/// Les ventes passent par le panier ([CartScreen]).
 class MovementFormScreen extends StatefulWidget {
-  const MovementFormScreen({super.key, required this.type, this.productId});
+  const MovementFormScreen({super.key, required this.type, this.productId})
+    : assert(type != MovementType.sale, 'Les ventes passent par CartScreen');
   final MovementType type;
   final int? productId;
 
@@ -37,13 +43,14 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   bool _loading = true;
   int _resetCount = 0;
 
-  bool get _isSale => widget.type == MovementType.sale;
+  bool get _isLoss => widget.type == MovementType.loss;
 
   @override
   void initState() {
     super.initState();
     _qty.addListener(() => setState(() {}));
     _price.addListener(() => setState(() {}));
+    _note.addListener(() => setState(() {}));
     _load(selectId: widget.productId);
   }
 
@@ -59,7 +66,7 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
     final repo = context.read<ShopRepository>();
     final uid = context.read<Session>().userId;
     final items = await repo.inventory(uid);
-    final partners = await repo.partners(uid, widget.type);
+    final partners = _isLoss ? <String>[] : await repo.partners(uid, widget.type);
     if (!mounted) return;
     setState(() {
       _items = items;
@@ -72,7 +79,9 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   }
 
   void _prefillPrice(StockItem item) {
-    final v = _isSale ? item.product.sellingPrice : item.cump;
+    if (_isLoss) return;
+    // Coût d'achat proposé : le CUMP actuel (à corriger avec le prix de la facture).
+    final v = item.cump;
     _price.text = v <= 0 ? '' : v.round().toString();
   }
 
@@ -90,12 +99,7 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   }
 
   Future<void> _pickProduct() async {
-    final picked = await showModalBottomSheet<StockItem>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) => _ProductPicker(items: _items, forSale: _isSale),
-    );
+    final picked = await pickProduct(context, _items, needsStock: _isLoss);
     if (picked != null) {
       setState(() => _selected = picked);
       _prefillPrice(picked);
@@ -125,26 +129,28 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
     final item = _selected!;
     final qty = int.parse(_qty.text.trim());
     final date = _date;
-    final price = Fmt.parseNumber(_price.text)!;
-    final total = qty * price;
+    final price = _isLoss ? item.cump : Fmt.parseNumber(_price.text)!;
 
     final lines = <String>[
       '${item.product.name} (${item.product.reference})',
       'Quantité : ${Fmt.qtyUnit(qty, item.product.unit)}',
-      '${_isSale ? 'Prix de vente' : 'Coût d\'achat'} : ${Fmt.money(price)}',
-      'Total : ${Fmt.money(total)}',
+      if (_isLoss) ...[
+        'Motif : ${_note.text.trim()}',
+        'Valeur perdue (au CUMP) : ${Fmt.money(qty * price)}',
+        'Stock après : ${Fmt.qtyUnit(item.stock - qty, item.product.unit)}',
+      ] else ...[
+        'Coût d\'achat : ${Fmt.money(price)}',
+        'Total : ${Fmt.money(qty * price)}',
+        'Stock après : ${Fmt.qtyUnit(item.stock + qty, item.product.unit)}',
+      ],
       'Date : ${Fmt.dateTime(date)}',
     ];
-    if (_isSale) {
-      final profit = StockMath.saleProfit(qty, price, item.cump);
-      lines.add('Bénéfice estimé : ${Fmt.money(profit)}');
-      if (price < item.cump) lines.add('\n⚠ Vente à perte : prix inférieur au CUMP (${Fmt.money(item.cump)}).');
-    }
     final ok = await confirm(
       context,
-      _isSale ? 'Confirmer la vente' : 'Confirmer l\'entrée',
+      _isLoss ? 'Confirmer la perte' : 'Confirmer l\'entrée',
       lines.join('\n'),
       ok: 'Enregistrer',
+      danger: _isLoss,
     );
     if (!ok || !mounted) return;
 
@@ -157,7 +163,7 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
         quantity: qty,
         unitPrice: price,
         date: date,
-        partner: _partner.text,
+        partner: _isLoss ? null : _partner.text,
         note: _note.text,
       );
       if (!mounted) return;
@@ -176,8 +182,8 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   Widget build(BuildContext context) {
     final item = _selected;
     final qty = int.tryParse(_qty.text.trim()) ?? 0;
-    final price = Fmt.parseNumber(_price.text) ?? 0;
-    final title = _isSale ? 'Nouvelle vente' : 'Nouvelle entrée';
+    final price = _isLoss ? (item?.cump ?? 0) : (Fmt.parseNumber(_price.text) ?? 0);
+    final title = _isLoss ? 'Déclarer une perte' : 'Nouvelle entrée';
 
     return Scaffold(
       appBar: AppBar(
@@ -196,6 +202,15 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  if (_isLoss)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Pour un article cassé, périmé, volé ou consommé : il sort du stock sans être vendu. '
+                        'Sa valeur est comptée en perte dans les rapports.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
                   InkWell(
                     onTap: _pickProduct,
                     borderRadius: BorderRadius.circular(4),
@@ -222,7 +237,6 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                         child: Column(
                           children: [
                             _line('Catégorie', item.categoryName ?? 'Sans catégorie'),
-                            _line('Unité', item.product.unit),
                             Row(
                               children: [
                                 const Expanded(child: Text('Stock disponible')),
@@ -237,7 +251,6 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                               ],
                             ),
                             _line('CUMP actuel', Fmt.money(item.cump)),
-                            if (_isSale) _line('Prix de vente catalogue', Fmt.money(item.product.sellingPrice)),
                           ],
                         ),
                       ),
@@ -264,89 +277,102 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                           validator: (v) {
                             final err = requiredInt(v, min: 1, field: 'La quantité');
                             if (err != null) return err;
-                            if (_isSale && item != null && int.parse(v!.trim()) > item.stock) {
+                            if (_isLoss && item != null && int.parse(v!.trim()) > item.stock) {
                               return 'Max. ${item.stock < 0 ? 0 : item.stock}';
                             }
                             return null;
                           },
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _price,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: intInput,
-                          decoration: InputDecoration(
-                            labelText: _isSale ? 'Prix unitaire *' : 'Coût unitaire *',
-                            suffixText: 'FCFA',
+                      if (!_isLoss) ...[
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _price,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: intInput,
+                            decoration: const InputDecoration(labelText: 'Coût unitaire *', suffixText: 'FCFA'),
+                            validator: (v) => requiredAmount(v, allowZero: false),
                           ),
-                          validator: (v) => requiredAmount(v, allowZero: _isSale),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 16),
-                  Autocomplete<String>(
-                    key: ValueKey(_resetCount),
-                    optionsBuilder: (v) => v.text.isEmpty
-                        ? const Iterable<String>.empty()
-                        : _partners.where((p) => p.toLowerCase().contains(v.text.toLowerCase())),
-                    onSelected: (v) => _partner.text = v,
-                    fieldViewBuilder: (context, ctrl, focus, _) {
-                      return TextFormField(
-                        controller: ctrl,
-                        focusNode: focus,
-                        textCapitalization: TextCapitalization.words,
-                        onChanged: (v) => _partner.text = v,
-                        decoration: InputDecoration(
-                          labelText: _isSale ? 'Client (facultatif)' : 'Fournisseur (facultatif)',
-                          prefixIcon: Icon(_isSale ? Icons.person_outline : Icons.local_shipping_outlined),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _note,
-                    decoration: InputDecoration(
-                      labelText: 'Note (facultatif)',
-                      hintText: _isSale ? '' : 'ex. n° de facture',
-                      prefixIcon: const Icon(Icons.notes),
+                  if (_isLoss) ...[
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 0,
+                      children: [
+                        for (final r in lossReasons)
+                          ChoiceChip(
+                            label: Text(r),
+                            selected: _note.text.trim() == r,
+                            onSelected: (_) => _note.text = r,
+                          ),
+                      ],
                     ),
-                  ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: _note,
+                      decoration: const InputDecoration(
+                        labelText: 'Motif *',
+                        hintText: 'ex. bouteilles cassées pendant le transport',
+                        prefixIcon: Icon(Icons.report_problem_outlined),
+                      ),
+                      validator: (v) => (v == null || v.trim().length < 3) ? 'Indiquez le motif de la perte' : null,
+                    ),
+                  ] else ...[
+                    Autocomplete<String>(
+                      key: ValueKey(_resetCount),
+                      optionsBuilder: (v) => v.text.isEmpty
+                          ? const Iterable<String>.empty()
+                          : _partners.where((p) => p.toLowerCase().contains(v.text.toLowerCase())),
+                      onSelected: (v) => _partner.text = v,
+                      fieldViewBuilder: (context, ctrl, focus, _) {
+                        return TextFormField(
+                          controller: ctrl,
+                          focusNode: focus,
+                          textCapitalization: TextCapitalization.words,
+                          onChanged: (v) => _partner.text = v,
+                          decoration: const InputDecoration(
+                            labelText: 'Fournisseur (facultatif)',
+                            prefixIcon: Icon(Icons.local_shipping_outlined),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _note,
+                      decoration: const InputDecoration(
+                        labelText: 'Note (facultatif)',
+                        hintText: 'ex. n° de facture',
+                        prefixIcon: Icon(Icons.notes),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Card(
-                    color: Theme.of(context).colorScheme.primaryContainer,
+                    color: _isLoss
+                        ? Theme.of(context).colorScheme.errorContainer
+                        : Theme.of(context).colorScheme.primaryContainer,
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
                         children: [
                           Row(
                             children: [
-                              const Expanded(child: Text('Total', style: TextStyle(fontSize: 16))),
+                              Expanded(
+                                child: Text(_isLoss ? 'Valeur perdue' : 'Total', style: const TextStyle(fontSize: 16)),
+                              ),
                               Text(
                                 Fmt.money(qty * price),
                                 style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                               ),
                             ],
                           ),
-                          if (_isSale && item != null && qty > 0) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Expanded(child: Text('Bénéfice estimé')),
-                                Text(
-                                  Fmt.money(StockMath.saleProfit(qty, price, item.cump)),
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: price < item.cump ? Theme.of(context).colorScheme.error : okColor,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                          if (!_isSale && item != null && qty > 0 && price > 0) ...[
+                          if (!_isLoss && item != null && qty > 0 && price > 0) ...[
                             const SizedBox(height: 4),
                             Row(
                               children: [
@@ -370,9 +396,12 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                   ),
                   const SizedBox(height: 16),
                   FilledButton.icon(
+                    style: _isLoss
+                        ? FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error)
+                        : null,
                     onPressed: _busy ? null : _submit,
-                    icon: Icon(_isSale ? Icons.point_of_sale : Icons.add_shopping_cart),
-                    label: Text(_isSale ? 'Enregistrer la vente' : 'Enregistrer l\'entrée'),
+                    icon: Icon(_isLoss ? Icons.remove_circle_outline : Icons.add_shopping_cart),
+                    label: Text(_isLoss ? 'Enregistrer la perte' : 'Enregistrer l\'entrée'),
                   ),
                 ],
               ),
@@ -389,73 +418,4 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
       ],
     ),
   );
-}
-
-class _ProductPicker extends StatefulWidget {
-  const _ProductPicker({required this.items, required this.forSale});
-  final List<StockItem> items;
-  final bool forSale;
-
-  @override
-  State<_ProductPicker> createState() => _ProductPickerState();
-}
-
-class _ProductPickerState extends State<_ProductPicker> {
-  String _q = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final q = _q.toLowerCase();
-    final list = widget.items
-        .where(
-          (i) => q.isEmpty || i.product.name.toLowerCase().contains(q) || i.product.reference.toLowerCase().contains(q),
-        )
-        .toList();
-    // La feuille remonte au-dessus du clavier et la liste rétrécit au lieu d'être masquée.
-    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
-    final height = MediaQuery.sizeOf(context).height * 0.75 - keyboard;
-    return Padding(
-      padding: EdgeInsets.only(bottom: keyboard),
-      child: SizedBox(
-        height: height < 220 ? 220 : height,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: TextField(
-                autofocus: true,
-                onChanged: (v) => setState(() => _q = v.trim()),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  hintText: 'Nom ou référence',
-                  prefixIcon: Icon(Icons.search),
-                ),
-              ),
-            ),
-            Expanded(
-              child: list.isEmpty
-                  ? const Center(child: Text('Aucun produit trouvé'))
-                  : ListView.builder(
-                      itemCount: list.length,
-                      itemBuilder: (context, i) {
-                        final it = list[i];
-                        final disabled = widget.forSale && it.stock <= 0;
-                        return ListTile(
-                          enabled: !disabled,
-                          title: Text(it.product.name),
-                          subtitle: Text('${it.product.reference} · ${it.categoryName ?? 'Sans catégorie'}'),
-                          trailing: Text(
-                            disabled ? 'Rupture' : Fmt.qtyUnit(it.stock, it.product.unit),
-                            style: TextStyle(color: statusColor(context, it.status), fontWeight: FontWeight.bold),
-                          ),
-                          onTap: () => Navigator.pop(context, it),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

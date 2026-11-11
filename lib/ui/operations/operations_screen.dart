@@ -4,6 +4,9 @@ import '../../core/format.dart';
 import '../../core/period.dart';
 import '../../data/models.dart';
 import '../common.dart';
+import '../sales/cart_screen.dart';
+import '../sales/credits_screen.dart';
+import '../sales/ticket_screen.dart';
 import 'movement_form_screen.dart';
 import 'movement_tile.dart';
 
@@ -36,13 +39,21 @@ class _OperationsScreenState extends State<OperationsScreen> {
     if (range != null) setState(() => _period = Period.custom(range.start, range.end));
   }
 
-  void _open(MovementType type) =>
-      Navigator.push(context, MaterialPageRoute(builder: (_) => MovementFormScreen(type: type)));
+  void _go(Widget screen) => Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Opérations')),
+      appBar: AppBar(
+        title: const Text('Opérations'),
+        actions: [
+          IconButton(
+            tooltip: 'Tickets de caisse',
+            icon: const Icon(Icons.receipt_long),
+            onPressed: () => _go(const TicketsScreen()),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -51,7 +62,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: () => _open(MovementType.sale),
+                    onPressed: () => _go(const CartScreen()),
                     icon: const Icon(Icons.point_of_sale),
                     label: const Text('Vente'),
                   ),
@@ -59,9 +70,31 @@ class _OperationsScreenState extends State<OperationsScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: FilledButton.tonalIcon(
-                    onPressed: () => _open(MovementType.entry),
+                    onPressed: () => _go(const MovementFormScreen(type: MovementType.entry)),
                     icon: const Icon(Icons.add_shopping_cart),
                     label: const Text('Entrée'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _go(const MovementFormScreen(type: MovementType.loss)),
+                    icon: const Icon(Icons.remove_circle_outline),
+                    label: const Text('Perte'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _go(const CreditsScreen()),
+                    icon: const Icon(Icons.handshake_outlined),
+                    label: const Text('Crédits'),
                   ),
                 ),
               ],
@@ -89,6 +122,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     ButtonSegment(value: null, label: Text('Tout')),
                     ButtonSegment(value: MovementType.sale, label: Text('Ventes')),
                     ButtonSegment(value: MovementType.entry, label: Text('Entrées')),
+                    ButtonSegment(value: MovementType.loss, label: Text('Pertes')),
                   ],
                   selected: {_type},
                   onSelectionChanged: (s) => setState(() => _type = s.first),
@@ -137,6 +171,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                 final entries = active
                     .where((m) => m.type == MovementType.entry)
                     .fold<double>(0, (s, m) => s + m.total);
+                final losses = active.fold<double>(0, (s, m) => s + m.lossValue);
                 return Column(
                   children: [
                     Padding(
@@ -148,15 +183,23 @@ class _OperationsScreenState extends State<OperationsScreen> {
                           runSpacing: 2,
                           children: [
                             Text(Fmt.count(list.length, 'opération'), style: Theme.of(context).textTheme.bodySmall),
-                            if (_type != MovementType.entry)
+                            if (_type == null || _type == MovementType.sale)
                               Text(
                                 'Ventes : ${Fmt.money(sales)}',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
                               ),
-                            if (_type != MovementType.sale)
+                            if (_type == null || _type == MovementType.entry)
                               Text(
                                 'Entrées : ${Fmt.money(entries)}',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                            if ((_type == null && losses > 0) || _type == MovementType.loss)
+                              Text(
+                                'Pertes : ${Fmt.money(losses)}',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
                               ),
                           ],
                         ),

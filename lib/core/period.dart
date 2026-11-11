@@ -51,7 +51,7 @@ class Period {
 
   String get label {
     if (kind == PeriodKind.custom && from != null && to != null) {
-      return '${Fmt.date(from!)} → ${Fmt.date(to!.subtract(const Duration(days: 1)))}';
+      return 'du ${Fmt.date(from!)} au ${Fmt.date(to!.subtract(const Duration(days: 1)))}';
     }
     return kind.label;
   }

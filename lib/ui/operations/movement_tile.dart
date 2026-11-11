@@ -6,6 +6,7 @@ import '../../data/models.dart';
 import '../../data/shop_repository.dart';
 import '../../services/session.dart';
 import '../common.dart';
+import '../sales/ticket_screen.dart';
 
 /// Ligne d'historique. Disposition sur 2 lignes pour que le nom du produit,
 /// la date et les montants restent lisibles sur un écran de téléphone.
@@ -18,8 +19,15 @@ class MovementTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final m = movement;
     final isSale = m.type == MovementType.sale;
+    final isLoss = m.type == MovementType.loss;
     final theme = Theme.of(context);
-    final color = m.cancelled ? theme.disabledColor : (isSale ? okColor : theme.colorScheme.primary);
+    final color = m.cancelled
+        ? theme.disabledColor
+        : switch (m.type) {
+            MovementType.sale => okColor,
+            MovementType.entry => theme.colorScheme.primary,
+            MovementType.loss => theme.colorScheme.error,
+          };
     final strike = m.cancelled ? const TextStyle(decoration: TextDecoration.lineThrough) : const TextStyle();
     final small = theme.textTheme.bodySmall;
 
@@ -33,7 +41,15 @@ class MovementTile extends StatelessWidget {
             CircleAvatar(
               radius: 18,
               backgroundColor: color.withValues(alpha: 0.12),
-              child: Icon(isSale ? Icons.arrow_upward : Icons.arrow_downward, color: color, size: 20),
+              child: Icon(
+                isLoss
+                    ? Icons.remove_circle_outline
+                    : isSale
+                    ? Icons.arrow_upward
+                    : Icons.arrow_downward,
+                color: color,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -66,8 +82,10 @@ class MovementTile extends StatelessWidget {
                         child: Text(
                           [
                             if (showProduct) m.code,
+                            if (m.ticketNumber != null) 'T-${m.ticketNumber.toString().padLeft(4, '0')}',
                             Fmt.dateTime(m.date),
-                            '${isSale ? '−' : '+'}${Fmt.qtyUnit(m.quantity, m.unit)}',
+                            '${m.type == MovementType.entry ? '+' : '−'}${Fmt.qtyUnit(m.quantity, m.unit)}',
+                            if (isLoss && m.note != null) m.note!,
                           ].join(' · '),
                           style: small,
                         ),
@@ -111,11 +129,26 @@ Future<void> showMovementDetails(BuildContext context, Movement m) {
             _kv('Produit', '${m.productReference} — ${m.productName}'),
             _kv('Catégorie', m.categoryName ?? '-'),
             _kv('Quantité', Fmt.qtyUnit(m.quantity, m.unit)),
-            _kv(isSale ? 'Prix de vente' : 'Coût d\'achat', Fmt.money(m.unitPrice)),
+            _kv(switch (m.type) {
+              MovementType.sale => 'Prix de vente',
+              MovementType.entry => 'Coût d\'achat',
+              MovementType.loss => 'Valeur unitaire (CUMP)',
+            }, Fmt.money(m.unitPrice)),
             _kv('Total', Fmt.money(m.total)),
             if (isSale) _kv('CUMP à la vente', Fmt.money(m.unitCost)),
             if (isSale) _kv('Bénéfice', Fmt.money(m.profit)),
             if (m.partner != null) _kv(isSale ? 'Client' : 'Fournisseur', m.partner!),
+            if (m.ticketId != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheet);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => TicketScreen(ticketId: m.ticketId!)));
+                },
+                icon: const Icon(Icons.receipt_long),
+                label: Text('Voir le ticket T-${m.ticketNumber.toString().padLeft(4, '0')}'),
+              ),
+            ],
             if (m.note != null) _kv('Note', m.note!),
             if (m.cancelled) ...[
               const Divider(),
@@ -170,8 +203,22 @@ Future<void> _cancel(BuildContext context, Movement m) async {
   );
   if (reason == null || !context.mounted) return;
   try {
-    await context.read<ShopRepository>().cancelMovement(context.read<Session>().userId, m.id, reason);
-    if (context.mounted) showSuccess(context, '${m.code} annulée');
+    final refund = await context.read<ShopRepository>().cancelMovement(context.read<Session>().userId, m.id, reason);
+    if (!context.mounted) return;
+    if (refund >= 1) {
+      // L'article avait déjà été payé : le commerçant doit rendre l'argent.
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          icon: const Icon(Icons.undo, size: 36),
+          title: Text('${m.code} annulée'),
+          content: Text('Rendez ${Fmt.money(refund)} au client.\nLe remboursement est noté sur son ticket.'),
+          actions: [FilledButton(onPressed: () => Navigator.pop(c), child: const Text('C\'est fait'))],
+        ),
+      );
+    } else {
+      showSuccess(context, '${m.code} annulée');
+    }
   } catch (e) {
     if (context.mounted) showError(context, e);
   }

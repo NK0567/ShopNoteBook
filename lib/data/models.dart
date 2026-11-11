@@ -12,6 +12,9 @@ class AppUser {
   final int autoLockMinutes;
   final DateTime createdAt;
 
+  /// Un code de secours existe (permet de réinitialiser un mot de passe oublié).
+  final bool hasRecoveryCode;
+
   const AppUser({
     required this.id,
     required this.name,
@@ -22,6 +25,7 @@ class AppUser {
     required this.criticalColor,
     required this.autoLockMinutes,
     required this.createdAt,
+    this.hasRecoveryCode = false,
   });
 
   factory AppUser.fromMap(Map<String, Object?> m) => AppUser(
@@ -34,6 +38,7 @@ class AppUser {
     criticalColor: m['criticalColor'] as int,
     autoLockMinutes: m['autoLockMinutes'] as int,
     createdAt: DateTime.parse(m['createdAt'] as String),
+    hasRecoveryCode: m['recoveryHash'] != null,
   );
 
   AppUser copyWith({
@@ -53,6 +58,7 @@ class AppUser {
     criticalColor: criticalColor ?? this.criticalColor,
     autoLockMinutes: autoLockMinutes ?? this.autoLockMinutes,
     createdAt: createdAt,
+    hasRecoveryCode: hasRecoveryCode,
   );
 }
 
@@ -119,6 +125,10 @@ class StockItem {
   final double salesAmount;
   final double profit;
 
+  /// Pertes (casse, vol, périmés, écarts d'inventaire), valorisées au CUMP.
+  final int qtyLoss;
+  final double valueLoss;
+
   const StockItem({
     required this.product,
     required this.categoryName,
@@ -127,9 +137,11 @@ class StockItem {
     required this.qtyOut,
     required this.salesAmount,
     required this.profit,
+    this.qtyLoss = 0,
+    this.valueLoss = 0,
   });
 
-  int get stock => StockMath.finalStock(product.initialStock, qtyIn, qtyOut);
+  int get stock => StockMath.finalStock(product.initialStock, qtyIn, qtyOut, qtyLoss);
 
   double get cump => StockMath.cump(
     initialStock: product.initialStock,
@@ -150,12 +162,16 @@ class StockItem {
 }
 
 enum MovementType {
-  entry('IN', 'Entrée'),
-  sale('OUT', 'Sortie');
+  entry('IN', 'Entrée', 'E'),
+  sale('OUT', 'Vente', 'S'),
+  loss('LOSS', 'Perte', 'P');
 
-  const MovementType(this.code, this.label);
+  const MovementType(this.code, this.label, this.prefix);
   final String code;
   final String label;
+
+  /// Préfixe des numéros : E-0001, S-0001, P-0001.
+  final String prefix;
 
   static MovementType fromCode(String code) => MovementType.values.firstWhere((t) => t.code == code);
 }
@@ -181,6 +197,10 @@ class Movement {
   final String? cancelReason;
   final DateTime? cancelledAt;
 
+  /// Ticket de caisse de la vente (null pour les entrées, pertes et anciennes ventes).
+  final int? ticketId;
+  final int? ticketNumber;
+
   const Movement({
     required this.id,
     required this.number,
@@ -199,6 +219,8 @@ class Movement {
     this.cancelled = false,
     this.cancelReason,
     this.cancelledAt,
+    this.ticketId,
+    this.ticketNumber,
   });
 
   factory Movement.fromMap(Map<String, Object?> m) => Movement(
@@ -219,13 +241,18 @@ class Movement {
     cancelled: (m['cancelled'] as int) == 1,
     cancelReason: m['cancelReason'] as String?,
     cancelledAt: m['cancelledAt'] == null ? null : DateTime.parse(m['cancelledAt'] as String),
+    ticketId: m['ticketId'] as int?,
+    ticketNumber: m['ticketNumber'] as int?,
   );
 
   double get total => quantity * unitPrice;
 
   double get profit => type == MovementType.sale ? StockMath.saleProfit(quantity, unitPrice, unitCost) : 0;
 
-  String get code => '${type == MovementType.entry ? 'E' : 'S'}-${number.toString().padLeft(4, '0')}';
+  /// Valeur d'une perte (au CUMP du moment).
+  double get lossValue => type == MovementType.loss ? quantity * unitCost : 0;
+
+  String get code => '${type.prefix}-${number.toString().padLeft(4, '0')}';
 }
 
 /// Agrégats d'une période (tableau de bord / rapports).
@@ -236,6 +263,11 @@ class PeriodSummary {
   final double salesAmount;
   final double profit;
   final int salesCount;
+  final int qtyLoss;
+  final double valueLoss;
+
+  /// Argent réellement encaissé sur la période (ventes comptant + remboursements de crédit).
+  final double cashIn;
 
   const PeriodSummary({
     this.qtyIn = 0,
@@ -244,9 +276,15 @@ class PeriodSummary {
     this.salesAmount = 0,
     this.profit = 0,
     this.salesCount = 0,
+    this.qtyLoss = 0,
+    this.valueLoss = 0,
+    this.cashIn = 0,
   });
 
   double get marginRate => salesAmount <= 0 ? 0 : profit / salesAmount * 100;
+
+  /// Bénéfice après déduction des pertes.
+  double get netProfit => profit - valueLoss;
 }
 
 /// Classement des ventes par produit.
@@ -280,4 +318,123 @@ class AuditEntry {
   final String action;
   final String details;
   const AuditEntry(this.date, this.action, this.details);
+}
+
+/// Ligne d'un panier de vente (avant enregistrement).
+class SaleLine {
+  final StockItem item;
+  final int quantity;
+  final double unitPrice;
+
+  const SaleLine({required this.item, required this.quantity, required this.unitPrice});
+
+  double get total => quantity * unitPrice;
+  double get profit => StockMath.saleProfit(quantity, unitPrice, item.cump);
+
+  SaleLine copyWith({int? quantity, double? unitPrice}) =>
+      SaleLine(item: item, quantity: quantity ?? this.quantity, unitPrice: unitPrice ?? this.unitPrice);
+}
+
+/// Modes d'encaissement proposés.
+const paymentMethods = ['Espèces', 'Mobile Money', 'Orange Money', 'Virement', 'Autre'];
+
+/// Encaissement rattaché à un ticket (paiement comptant, acompte ou remboursement de crédit).
+class Payment {
+  final int id;
+  final int ticketId;
+  final int ticketNumber;
+  final double amount;
+  final DateTime date;
+  final String method;
+  final String? note;
+  final bool cancelled;
+
+  /// Montant négatif : somme rendue au client après une annulation.
+  bool get isRefund => amount < 0;
+
+  const Payment({
+    required this.id,
+    required this.ticketId,
+    required this.ticketNumber,
+    required this.amount,
+    required this.date,
+    required this.method,
+    this.note,
+    this.cancelled = false,
+  });
+
+  factory Payment.fromMap(Map<String, Object?> m) => Payment(
+    id: m['id'] as int,
+    ticketId: m['ticketId'] as int,
+    ticketNumber: (m['ticketNumber'] as int?) ?? 0,
+    amount: (m['amount'] as num).toDouble(),
+    date: DateTime.parse(m['date'] as String),
+    method: m['method'] as String,
+    note: m['note'] as String?,
+    cancelled: (m['cancelled'] as int) == 1,
+  );
+}
+
+/// Ticket de caisse : une vente d'un ou plusieurs articles à un client.
+class Ticket {
+  final int id;
+  final int number;
+  final DateTime date;
+  final String? client;
+  final String? note;
+
+  /// Total des lignes non annulées.
+  final double total;
+
+  /// Total encaissé (paiements non annulés).
+  final double paid;
+  final int lineCount;
+
+  const Ticket({
+    required this.id,
+    required this.number,
+    required this.date,
+    this.client,
+    this.note,
+    required this.total,
+    required this.paid,
+    required this.lineCount,
+  });
+
+  factory Ticket.fromMap(Map<String, Object?> m) => Ticket(
+    id: m['id'] as int,
+    number: m['number'] as int,
+    date: DateTime.parse(m['date'] as String),
+    client: m['client'] as String?,
+    note: m['note'] as String?,
+    total: ((m['total'] as num?) ?? 0).toDouble(),
+    paid: ((m['paid'] as num?) ?? 0).toDouble(),
+    lineCount: ((m['lineCount'] as num?) ?? 0).toInt(),
+  );
+
+  /// Reste à payer (négatif = trop-perçu à rendre au client, après une annulation).
+  double get balance => total - paid;
+
+  bool get isCredit => balance >= 1;
+
+  String get code => 'T-${number.toString().padLeft(4, '0')}';
+}
+
+/// Ticket avec ses lignes et ses encaissements (détail / reçu).
+class TicketDetail {
+  final Ticket ticket;
+  final List<Movement> lines;
+  final List<Payment> payments;
+
+  const TicketDetail(this.ticket, this.lines, this.payments);
+}
+
+/// Total dû par un client (somme des tickets non soldés).
+class ClientDebt {
+  final String client;
+  final double balance;
+  final int ticketCount;
+  final DateTime oldest;
+
+  const ClientDebt({required this.client, required this.balance, required this.ticketCount, required this.oldest});
 }

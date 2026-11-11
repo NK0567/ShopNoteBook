@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/session.dart';
 import 'login_screen.dart';
+import 'recovery_code_dialog.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -37,12 +38,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
-      await context.read<Session>().register(
+      final code = await context.read<Session>().register(
         name: _name.text,
         email: _email.text,
         password: _password.text,
         businessName: _business.text,
       );
+      if (!mounted) return;
+      await showRecoveryCode(context, code);
       if (mounted) Navigator.pop(context, _email.text.trim().toLowerCase());
     } on AuthException catch (e) {
       if (mounted) setState(() => _error = e.message);

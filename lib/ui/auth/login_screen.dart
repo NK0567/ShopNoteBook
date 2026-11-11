@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/session.dart';
 import '../common.dart';
+import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 
 class AuthScaffold extends StatelessWidget {
@@ -149,6 +150,22 @@ class _LoginScreenState extends State<LoginScreen> {
                         }
                       },
                 child: const Text('Pas encore de compte ? Créer ma boutique'),
+              ),
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        final email = await Navigator.push<String>(
+                          context,
+                          MaterialPageRoute(builder: (_) => ForgotPasswordScreen(email: _email.text.trim())),
+                        );
+                        if (email != null && context.mounted) {
+                          _email.text = email;
+                          _password.clear();
+                          showSuccess(context, 'Mot de passe modifié. Connectez-vous.');
+                        }
+                      },
+                child: const Text('Mot de passe oublié ?'),
               ),
             ],
           ),

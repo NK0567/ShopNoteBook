@@ -261,12 +261,17 @@ class _ReloadingState<T> extends State<Reloading<T>> {
   int _revision = -1;
   List<Object?> _deps = const [];
   T? _last;
+  bool _loaded = false;
 
   void _maybeReload(ShopRepository repo, int userId) {
     if (_future == null || repo.revision != _revision || !_sameDeps(widget.deps, _deps)) {
       _revision = repo.revision;
       _deps = List.of(widget.deps);
-      _future = widget.load(repo, userId).then((v) => _last = v);
+      _future = widget.load(repo, userId).then((v) {
+        _last = v;
+        _loaded = true;
+        return v;
+      });
     }
   }
 
@@ -290,9 +295,11 @@ class _ReloadingState<T> extends State<Reloading<T>> {
         if (snap.hasError) {
           return EmptyState(icon: Icons.error_outline, message: 'Erreur de chargement :\n${snap.error}');
         }
-        final data = snap.data ?? _last;
-        if (data == null) return const Center(child: CircularProgressIndicator());
-        return widget.builder(context, data);
+        // Résultat frais, sinon dernier résultat connu pendant le rechargement
+        // (un résultat null est valide : élément supprimé entre-temps).
+        if (snap.connectionState == ConnectionState.done) return widget.builder(context, snap.data as T);
+        if (_loaded) return widget.builder(context, _last as T);
+        return const Center(child: CircularProgressIndicator());
       },
     );
   }
@@ -313,9 +320,11 @@ Future<String?> promptText(
   TextInputType? keyboardType,
   List<TextInputFormatter>? inputFormatters,
   TextCapitalization capitalization = TextCapitalization.sentences,
+  bool obscure = false,
 }) => showDialog<String>(
   context: context,
   builder: (_) => _PromptDialog(
+    obscure: obscure,
     title: title,
     message: message,
     label: label,
@@ -332,6 +341,7 @@ Future<String?> promptText(
 
 class _PromptDialog extends StatefulWidget {
   const _PromptDialog({
+    this.obscure = false,
     required this.title,
     this.message,
     this.label,
@@ -357,6 +367,9 @@ class _PromptDialog extends StatefulWidget {
   final List<TextInputFormatter>? inputFormatters;
   final TextCapitalization capitalization;
 
+  /// Saisie masquée (mot de passe) : la valeur est rendue telle quelle, sans retirer les espaces.
+  final bool obscure;
+
   @override
   State<_PromptDialog> createState() => _PromptDialogState();
 }
@@ -376,7 +389,7 @@ class _PromptDialogState extends State<_PromptDialog> {
       setState(() => _error = 'Ce champ est obligatoire');
       return;
     }
-    Navigator.pop(context, _ctrl.text.trim());
+    Navigator.pop(context, widget.obscure ? _ctrl.text : _ctrl.text.trim());
   }
 
   @override
@@ -395,6 +408,9 @@ class _PromptDialogState extends State<_PromptDialog> {
               keyboardType: widget.keyboardType,
               inputFormatters: widget.inputFormatters,
               textCapitalization: widget.capitalization,
+              obscureText: widget.obscure,
+              autocorrect: !widget.obscure,
+              enableSuggestions: !widget.obscure,
               onSubmitted: (_) => _submit(),
               decoration: InputDecoration(labelText: widget.label, hintText: widget.hint, errorText: _error),
             ),
