@@ -38,7 +38,9 @@ jobs:
       - name: Version
         id: version
         shell: bash
-        run: echo "v=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//')" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//' | tr -d '\r')
+          echo "v=$v" >> "$GITHUB_OUTPUT"
       - name: Installateur (Inno Setup)
         shell: pwsh
         run: |
@@ -48,7 +50,8 @@ jobs:
           & $iscc "/DAppVersion=${{ steps.version.outputs.v }}" windows\installer\shopbook.iss
       - name: Version portable (zip)
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath build\installer\ShopBook-portable-${{ steps.version.outputs.v }}.zip
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "build\installer\ShopBook-portable-${{ steps.version.outputs.v }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: ShopBook-Windows-${{ steps.version.outputs.v }}

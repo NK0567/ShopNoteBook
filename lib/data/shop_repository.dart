@@ -5,6 +5,8 @@ import 'package:sqflite/sqflite.dart';
 import '../core/format.dart';
 import 'models.dart';
 
+part 'shop_repository_v4.dart';
+
 /// Erreur métier affichable telle quelle à l'utilisateur.
 class BusinessException implements Exception {
   final String message;
@@ -195,6 +197,11 @@ class ShopRepository extends ChangeNotifier {
         final cat = await txn.query('categories', where: 'id = ? AND userId = ?', whereArgs: [p.categoryId, userId]);
         if (cat.isEmpty) throw const BusinessException('Catégorie inconnue');
       }
+      final barcode = _clean(p.barcode);
+      if (barcode != null) {
+        final other = await _productByBarcode(txn, userId, barcode);
+        if (other != null && other != p.id) throw const BusinessException('Ce code-barres est déjà attribué à un autre produit');
+      }
 
       final values = <String, Object?>{
         'reference': reference,
@@ -203,6 +210,7 @@ class ShopRepository extends ChangeNotifier {
         'unit': p.unit.trim().isEmpty ? 'unité' : p.unit.trim(),
         'alertThreshold': p.alertThreshold,
         'sellingPrice': p.sellingPrice,
+        'barcode': barcode,
         'updatedAt': _now(),
       };
 
@@ -408,6 +416,8 @@ class ShopRepository extends ChangeNotifier {
     required double paid,
     String method = 'Espèces',
     String? note,
+    int? priceLevelId,
+    int? quoteId,
   }) async {
     if (lines.isEmpty) throw const BusinessException('Le panier est vide');
     for (final l in lines) {
@@ -435,6 +445,21 @@ class ShopRepository extends ChangeNotifier {
         items[e.key] = item;
       }
 
+      // Fiche client créée au besoin ; plafond de crédit vérifié.
+      if (who != null) {
+        final client = await _ensureClient(txn, userId, who);
+        final credit = total - cashed;
+        if (credit >= 1 && client.creditLimit > 0) {
+          final owed = await _clientBalance(txn, userId, who);
+          if (owed + credit > client.creditLimit + 0.5) {
+            throw BusinessException(
+              'Plafond de crédit dépassé pour $who : il doit déjà ${Fmt.money(owed)}, '
+              'plafond ${Fmt.money(client.creditLimit)}.',
+            );
+          }
+        }
+      }
+
       final ticketNumber = await _nextNumber(txn, 'tickets', userId);
       final tId = await txn.insert('tickets', {
         'userId': userId,
@@ -442,8 +467,18 @@ class ShopRepository extends ChangeNotifier {
         'date': iso(date),
         'client': who,
         'note': _clean(note),
+        'priceLevelId': priceLevelId,
         'createdAt': _now(),
       });
+      if (quoteId != null) {
+        final n = await txn.update(
+          'quotes',
+          {'status': QuoteStatus.converted.code, 'ticketId': tId},
+          where: 'id = ? AND userId = ? AND status = ?',
+          whereArgs: [quoteId, userId, QuoteStatus.open.code],
+        );
+        if (n == 0) throw const BusinessException('Ce devis a déjà été transformé ou annulé');
+      }
       var number = await _nextNumber(txn, 'movements', userId, type: 'OUT');
       for (final l in lines) {
         final item = items[l.item.product.id!]!;
@@ -460,6 +495,8 @@ class ShopRepository extends ChangeNotifier {
           'partner': who,
           'note': _clean(note),
           'ticketId': tId,
+          'packName': PackMath.isPack(l.packSize) ? l.packName : null,
+          'packSize': PackMath.isPack(l.packSize) ? l.packSize : null,
           'createdAt': _now(),
         });
       }
@@ -994,13 +1031,16 @@ class ShopRepository extends ChangeNotifier {
   Future<List<String>> clients(int userId) async {
     final rows = await db.rawQuery(
       '''
-      SELECT client, MAX(date) AS last FROM tickets
-      WHERE userId = ? AND client IS NOT NULL AND client <> ''
-      GROUP BY client COLLATE NOCASE ORDER BY last DESC LIMIT 100
+      SELECT name, MAX(last) AS last FROM (
+        SELECT client AS name, date AS last FROM tickets
+        WHERE userId = ? AND client IS NOT NULL AND client <> ''
+        UNION ALL
+        SELECT name, createdAt AS last FROM clients WHERE userId = ?
+      ) GROUP BY name COLLATE NOCASE ORDER BY last DESC LIMIT 300
     ''',
-      [userId],
+      [userId, userId],
     );
-    return rows.map((r) => r['client'] as String).toList();
+    return rows.map((r) => r['name'] as String).toList();
   }
 
   /// Achats par fournisseur sur une période (comparaison des fournisseurs).
@@ -1030,7 +1070,8 @@ class ShopRepository extends ChangeNotifier {
   // ======================================================================
 
   static const backupFormat = 'shopbook-backup';
-  static const backupVersion = 1;
+  /// v2 : + profil, tarifs, conditionnements, clients, devis.
+  static const backupVersion = 2;
 
   /// Exporte toutes les données de la boutique (sans le mot de passe).
   Future<Map<String, Object?>> exportData(int userId) async {
@@ -1054,6 +1095,22 @@ class ShopRepository extends ChangeNotifier {
       'tickets': await all('tickets'),
       'movements': await all('movements'),
       'payments': await all('payments'),
+      'profile': (await db.query('shop_profile', where: 'userId = ?', whereArgs: [userId])).firstOrNull,
+      'priceLevels': await all('price_levels'),
+      'productPrices': await db.rawQuery(
+        'SELECT pp.* FROM product_prices pp JOIN products p ON p.id = pp.productId WHERE p.userId = ?',
+        [userId],
+      ),
+      'productPacks': await db.rawQuery(
+        'SELECT pk.* FROM product_packs pk JOIN products p ON p.id = pk.productId WHERE p.userId = ? ORDER BY pk.id',
+        [userId],
+      ),
+      'clients': await all('clients'),
+      'quotes': await all('quotes'),
+      'quoteLines': await db.rawQuery(
+        'SELECT l.* FROM quote_lines l JOIN quotes q ON q.id = l.quoteId WHERE q.userId = ? ORDER BY l.id',
+        [userId],
+      ),
     };
   }
 
@@ -1074,11 +1131,22 @@ class ShopRepository extends ChangeNotifier {
     final tickets = list('tickets');
     final movements = list('movements');
     final payments = list('payments');
+    // Sauvegardes v1 : pas encore de tarifs, clients ni devis.
+    List<Map<String, Object?>> optional(String key) => data[key] is List ? list(key) : const [];
+    final levels = optional('priceLevels');
+    final productPrices = optional('productPrices');
+    final productPacks = optional('productPacks');
+    final clients = optional('clients');
+    final quotes = optional('quotes');
+    final quoteLines = optional('quoteLines');
+    final profile = data['profile'] is Map ? (data['profile'] as Map).cast<String, Object?>() : null;
 
     await db.transaction((txn) async {
-      for (final t in ['payments', 'movements', 'tickets', 'products', 'categories']) {
+      // quote_lines, product_prices et product_packs suivent par ON DELETE CASCADE.
+      for (final t in ['quotes', 'clients', 'payments', 'movements', 'tickets', 'products', 'price_levels', 'categories']) {
         await txn.delete(t, where: 'userId = ?', whereArgs: [userId]);
       }
+      await txn.delete('shop_profile', where: 'userId = ?', whereArgs: [userId]);
       Map<String, Object?> strip(Map<String, Object?> row, List<String> drop) =>
           Map.of(row)..removeWhere((k, _) => drop.contains(k));
 
@@ -1097,12 +1165,54 @@ class ShopRepository extends ChangeNotifier {
           'categoryId': p['categoryId'] == null ? null : catIds[p['categoryId']],
         });
       }
+      final levelIds = <Object?, int>{};
+      for (final l in levels) {
+        levelIds[l['id']] = await txn.insert('price_levels', {...strip(l, ['id']), 'userId': userId});
+      }
+      for (final pp in productPrices) {
+        final pid = productIds[pp['productId']], lid = levelIds[pp['levelId']];
+        if (pid != null && lid != null) {
+          await txn.insert('product_prices', {
+            'productId': pid,
+            'levelId': lid,
+            'price': pp['price'],
+            'minQty': pp['minQty'] ?? 0,
+          });
+        }
+      }
+      for (final pk in productPacks) {
+        final pid = productIds[pk['productId']];
+        if (pid != null) await txn.insert('product_packs', {...strip(pk, ['id']), 'productId': pid});
+      }
+      if (profile != null) await txn.insert('shop_profile', {...profile, 'userId': userId});
+      for (final c in clients) {
+        await txn.insert('clients', {
+          ...strip(c, ['id']),
+          'userId': userId,
+          'priceLevelId': levelIds[c['priceLevelId']],
+        });
+      }
       final ticketIds = <Object?, int>{};
       for (final t in tickets) {
         ticketIds[t['id']] = await txn.insert('tickets', {
           ...strip(t, ['id']),
           'userId': userId,
+          if (t.containsKey('priceLevelId')) 'priceLevelId': levelIds[t['priceLevelId']],
         });
+      }
+      final quoteIds = <Object?, int>{};
+      for (final q in quotes) {
+        quoteIds[q['id']] = await txn.insert('quotes', {
+          ...strip(q, ['id']),
+          'userId': userId,
+          'ticketId': ticketIds[q['ticketId']],
+        });
+      }
+      for (final l in quoteLines) {
+        final qid = quoteIds[l['quoteId']], pid = productIds[l['productId']];
+        if (qid != null && pid != null) {
+          await txn.insert('quote_lines', {...strip(l, ['id']), 'quoteId': qid, 'productId': pid});
+        }
       }
       for (final m in movements) {
         final pid = productIds[m['productId']];

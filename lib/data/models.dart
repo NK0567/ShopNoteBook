@@ -1,4 +1,8 @@
+import '../core/pricing.dart';
 import '../core/stock_math.dart';
+
+export '../core/pricing.dart' show PackMath, LevelPrice, PriceChoice, Pricing, Vat;
+export 'shop_models.dart';
 
 /// Compte commerçant (une boutique par compte, données isolées par userId).
 class AppUser {
@@ -80,8 +84,12 @@ class Product {
   final int alertThreshold;
   final int initialStock;
   final double initialUnitCost;
+  /// Prix de vente de base (tarif « Détail »).
   final double sellingPrice;
   final bool archived;
+
+  /// Code-barres (EAN…) : saisi à la douchette ou au clavier.
+  final String? barcode;
 
   const Product({
     this.id,
@@ -94,6 +102,7 @@ class Product {
     required this.initialUnitCost,
     required this.sellingPrice,
     this.archived = false,
+    this.barcode,
   });
 
   factory Product.fromMap(Map<String, Object?> m) => Product(
@@ -107,6 +116,7 @@ class Product {
     initialUnitCost: (m['initialUnitCost'] as num).toDouble(),
     sellingPrice: (m['sellingPrice'] as num).toDouble(),
     archived: (m['archived'] as int) == 1,
+    barcode: m['barcode'] as String?,
   );
 
   /// Référence normalisée : sans espaces superflus, en majuscules
@@ -201,6 +211,11 @@ class Movement {
   final int? ticketId;
   final int? ticketNumber;
 
+  /// Conditionnement utilisé à la saisie (ex. « Carton » de 24). La quantité
+  /// et le prix restent toujours exprimés à l'unité de base.
+  final String? packName;
+  final int? packSize;
+
   const Movement({
     required this.id,
     required this.number,
@@ -221,6 +236,8 @@ class Movement {
     this.cancelledAt,
     this.ticketId,
     this.ticketNumber,
+    this.packName,
+    this.packSize,
   });
 
   factory Movement.fromMap(Map<String, Object?> m) => Movement(
@@ -243,9 +260,17 @@ class Movement {
     cancelledAt: m['cancelledAt'] == null ? null : DateTime.parse(m['cancelledAt'] as String),
     ticketId: m['ticketId'] as int?,
     ticketNumber: m['ticketNumber'] as int?,
+    packName: m['packName'] as String?,
+    packSize: m['packSize'] as int?,
   );
 
   double get total => quantity * unitPrice;
+
+  /// « 2 Cartons (48 unités) » ou « 5 unités ».
+  String get quantityLabel => PackMath.label(quantity, unit, packName, packSize);
+
+  /// Prix affiché : par conditionnement si la ligne a été saisie ainsi.
+  double get displayPrice => PackMath.isPack(packSize) && quantity % packSize! == 0 ? unitPrice * packSize! : unitPrice;
 
   double get profit => type == MovementType.sale ? StockMath.saleProfit(quantity, unitPrice, unitCost) : 0;
 
@@ -323,16 +348,47 @@ class AuditEntry {
 /// Ligne d'un panier de vente (avant enregistrement).
 class SaleLine {
   final StockItem item;
+
+  /// Quantité à l'unité de base (un carton de 24 = 24).
   final int quantity;
+
+  /// Prix à l'unité de base.
   final double unitPrice;
 
-  const SaleLine({required this.item, required this.quantity, required this.unitPrice});
+  /// Conditionnement choisi à la saisie (null = vente à l'unité).
+  final String? packName;
+  final int? packSize;
+
+  /// Tarif appliqué (« Détail », « Gros »…), pour information.
+  final String? levelName;
+
+  const SaleLine({
+    required this.item,
+    required this.quantity,
+    required this.unitPrice,
+    this.packName,
+    this.packSize,
+    this.levelName,
+  });
 
   double get total => quantity * unitPrice;
   double get profit => StockMath.saleProfit(quantity, unitPrice, item.cump);
 
-  SaleLine copyWith({int? quantity, double? unitPrice}) =>
-      SaleLine(item: item, quantity: quantity ?? this.quantity, unitPrice: unitPrice ?? this.unitPrice);
+  String get quantityLabel => PackMath.label(quantity, item.product.unit, packName, packSize);
+
+  /// Prix par conditionnement si la ligne est saisie en cartons, sinon à l'unité.
+  double get displayPrice => PackMath.isPack(packSize) ? unitPrice * packSize! : unitPrice;
+
+  String get priceUnitLabel => PackMath.isPack(packSize) ? packName! : item.product.unit;
+
+  SaleLine copyWith({int? quantity, double? unitPrice}) => SaleLine(
+    item: item,
+    quantity: quantity ?? this.quantity,
+    unitPrice: unitPrice ?? this.unitPrice,
+    packName: packName,
+    packSize: packSize,
+    levelName: levelName,
+  );
 }
 
 /// Modes d'encaissement proposés.
@@ -390,6 +446,11 @@ class Ticket {
   final double paid;
   final int lineCount;
 
+  /// Facture émise pour ce ticket (numérotation annuelle continue, sans trou).
+  final int? invoiceYear;
+  final int? invoiceNumber;
+  final DateTime? invoiceDate;
+
   const Ticket({
     required this.id,
     required this.number,
@@ -399,7 +460,16 @@ class Ticket {
     required this.total,
     required this.paid,
     required this.lineCount,
+    this.invoiceYear,
+    this.invoiceNumber,
+    this.invoiceDate,
   });
+
+  bool get hasInvoice => invoiceNumber != null;
+
+  /// « FAC-2026-0001 ».
+  String? get invoiceCode =>
+      invoiceNumber == null ? null : 'FAC-$invoiceYear-${invoiceNumber.toString().padLeft(4, '0')}';
 
   factory Ticket.fromMap(Map<String, Object?> m) => Ticket(
     id: m['id'] as int,
@@ -410,6 +480,9 @@ class Ticket {
     total: ((m['total'] as num?) ?? 0).toDouble(),
     paid: ((m['paid'] as num?) ?? 0).toDouble(),
     lineCount: ((m['lineCount'] as num?) ?? 0).toInt(),
+    invoiceYear: m['invoiceYear'] as int?,
+    invoiceNumber: m['invoiceNumber'] as int?,
+    invoiceDate: m['invoiceDate'] == null ? null : DateTime.parse(m['invoiceDate'] as String),
   );
 
   /// Reste à payer (négatif = trop-perçu à rendre au client, après une annulation).

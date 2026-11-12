@@ -11,9 +11,10 @@ import 'db_factory.dart';
 ///      inventaire calculé (CUMP), journal d'audit, verrouillage de compte.
 /// v3 : tickets de caisse multi-articles, encaissements et ventes à crédit,
 ///      pertes / écarts d'inventaire, code de secours du mot de passe.
+/// v4 : boutique paramétrable (tarifs, conditionnements, clients, devis, factures).
 class AppDatabase {
   static const String fileName = 'shopbook.db';
-  static const int version = 3;
+  static const int version = 4;
 
   static Future<Database> open({DatabaseFactory? factory, String? path}) async {
     final f = factory ?? platformDatabaseFactory();
@@ -81,6 +82,7 @@ class AppDatabase {
         details TEXT NOT NULL,
         createdAt TEXT NOT NULL
       )''');
+    await _addV4(db);
   }
 
   /// Tickets de caisse (une vente = un ticket de une ou plusieurs lignes)
@@ -148,6 +150,113 @@ class AppDatabase {
       return;
     }
     if (oldVersion < 3) await _migrateV2toV3(db);
+    if (oldVersion < 4) await _addV4(db);
+  }
+
+  /// v4 : boutique paramétrable (détaillant, grossiste ou les deux).
+  /// - profil de la boutique (coordonnées, NIU, RCCM, TVA) pour les factures ;
+  /// - grilles de tarifs libres (Détail, Demi-gros, Gros…) avec paliers de quantité ;
+  /// - conditionnements (carton de 24, sac de 50 kg…) et codes-barres ;
+  /// - fiches clients (tarif attitré, plafond de crédit) ;
+  /// - devis / factures pro forma et numérotation des factures.
+  static Future<void> _addV4(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE shop_profile (
+        userId INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        shopType TEXT NOT NULL DEFAULT 'retail' CHECK (shopType IN ('retail', 'wholesale', 'hybrid')),
+        activity TEXT,
+        address TEXT,
+        city TEXT,
+        phone TEXT,
+        niu TEXT,
+        rccm TEXT,
+        invoiceFooter TEXT,
+        vatEnabled INTEGER NOT NULL DEFAULT 0,
+        vatRate REAL NOT NULL DEFAULT 19.25 CHECK (vatRate >= 0 AND vatRate < 100),
+        receiptWidth INTEGER NOT NULL DEFAULT 80 CHECK (receiptWidth IN (58, 80))
+      )''');
+    await db.execute('''
+      CREATE TABLE price_levels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        minQty INTEGER NOT NULL DEFAULT 0 CHECK (minQty >= 0),
+        position INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (userId, name)
+      )''');
+    await db.execute('''
+      CREATE TABLE product_prices (
+        productId INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        levelId INTEGER NOT NULL REFERENCES price_levels(id) ON DELETE CASCADE,
+        price REAL NOT NULL CHECK (price >= 0),
+        -- Palier propre au produit : ce prix s'applique d'office dès minQty unités.
+        minQty INTEGER NOT NULL DEFAULT 0 CHECK (minQty >= 0),
+        PRIMARY KEY (productId, levelId)
+      )''');
+    await db.execute('''
+      CREATE TABLE product_packs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        productId INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        quantity INTEGER NOT NULL CHECK (quantity > 1),
+        price REAL NOT NULL DEFAULT 0 CHECK (price >= 0), -- 0 = prix unitaire x quantité
+        barcode TEXT
+      )''');
+    await db.execute('ALTER TABLE products ADD COLUMN barcode TEXT');
+    await db.execute('CREATE INDEX idx_products_barcode ON products(userId, barcode)');
+    await db.execute('''
+      CREATE TABLE clients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        phone TEXT,
+        address TEXT,
+        niu TEXT,
+        priceLevelId INTEGER REFERENCES price_levels(id) ON DELETE SET NULL,
+        creditLimit REAL NOT NULL DEFAULT 0 CHECK (creditLimit >= 0), -- 0 = sans plafond
+        note TEXT,
+        createdAt TEXT NOT NULL,
+        UNIQUE (userId, name)
+      )''');
+    // Les clients déjà cités sur des tickets deviennent des fiches clients.
+    await db.execute('''
+      INSERT OR IGNORE INTO clients (userId, name, createdAt)
+      SELECT userId, trim(client), MIN(createdAt) FROM tickets
+      WHERE trim(COALESCE(client, '')) <> '' GROUP BY userId, trim(client) COLLATE NOCASE''');
+    await db.execute('ALTER TABLE tickets ADD COLUMN priceLevelId INTEGER');
+    await db.execute('ALTER TABLE tickets ADD COLUMN invoiceYear INTEGER');
+    await db.execute('ALTER TABLE tickets ADD COLUMN invoiceNumber INTEGER');
+    await db.execute('ALTER TABLE tickets ADD COLUMN invoiceDate TEXT');
+    await db.execute(
+      'CREATE UNIQUE INDEX idx_tickets_invoice ON tickets(userId, invoiceYear, invoiceNumber) '
+      'WHERE invoiceNumber IS NOT NULL',
+    );
+    await db.execute('ALTER TABLE movements ADD COLUMN packName TEXT');
+    await db.execute('ALTER TABLE movements ADD COLUMN packSize INTEGER');
+    await db.execute('''
+      CREATE TABLE quotes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        number INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        validUntil TEXT,
+        client TEXT,
+        note TEXT,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'converted', 'cancelled')),
+        ticketId INTEGER REFERENCES tickets(id),
+        createdAt TEXT NOT NULL,
+        UNIQUE (userId, number)
+      )''');
+    await db.execute('''
+      CREATE TABLE quote_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quoteId INTEGER NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+        productId INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        unitPrice REAL NOT NULL CHECK (unitPrice >= 0),
+        packName TEXT,
+        packSize INTEGER
+      )''');
   }
 
   /// v3 : tickets de caisse, encaissements / crédits, pertes, code de secours.
