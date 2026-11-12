@@ -3,3 +3,5 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 /// Web : SQLite compilé en WebAssembly, stocké dans IndexedDB.
 DatabaseFactory platformDatabaseFactory() => databaseFactoryFfiWeb;
+
+Future<String> platformDatabaseDir(DatabaseFactory f) => f.getDatabasesPath();

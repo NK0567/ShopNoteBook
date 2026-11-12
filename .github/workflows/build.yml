@@ -1,0 +1,76 @@
+name: Build ShopBook
+
+# Fabrique l'installateur Windows et l'APK Android à chaque envoi sur main
+# (ou à la demande depuis l'onglet Actions). Les fichiers sont téléchargeables
+# dans la page du run, rubrique « Artifacts ».
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.1
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Tests (logique, PDF, écrans)
+        run: flutter test
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.1
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - name: Version
+        id: version
+        shell: bash
+        run: echo "v=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//')" >> "$GITHUB_OUTPUT"
+      - name: Installateur (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.v }}" windows\installer\shopbook.iss
+      - name: Version portable (zip)
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath build\installer\ShopBook-portable-${{ steps.version.outputs.v }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShopBook-Windows-${{ steps.version.outputs.v }}
+          path: build/installer/*
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.1
+          cache: true
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShopBook-Android
+          path: build/app/outputs/flutter-apk/app-release.apk

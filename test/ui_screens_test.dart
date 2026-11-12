@@ -23,7 +23,8 @@ import 'test_db.dart';
 const _screenshots = bool.fromEnvironment('SCREENSHOTS');
 
 Future<void> _loadFonts() async {
-  const dir = 'C:/flutter/bin/cache/artifacts/material_fonts';
+  final root = Platform.environment['FLUTTER_ROOT'] ?? 'C:/flutter';
+  final dir = '$root/bin/cache/artifacts/material_fonts';
   if (!Directory(dir).existsSync()) return;
   Future<ByteData> f(String name) async => ByteData.sublistView(await File('$dir/$name').readAsBytes());
   final roboto = FontLoader('Roboto')
@@ -206,9 +207,12 @@ void main() {
         await tester.tap(find.text('Opérations').last);
         await shot('08_operations');
 
-        await tester.tap(find.textContaining('Google Pixel').first);
+        // Première opération de la liste (toujours visible, même en grand texte).
+        await tester.tap(find.text('Tomates (cageot)').first);
         await shot('09_detail_operation');
         await tester.tapAt(const Offset(180, 40));
+        await settle();
+        await tester.drag(find.byType(Scrollable).last, const Offset(0, 2000));
         await settle();
 
         await tester.tap(find.widgetWithText(FilledButton, 'Vente'));

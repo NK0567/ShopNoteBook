@@ -118,11 +118,22 @@ class _OperationsScreenState extends State<OperationsScreen> {
               children: [
                 SegmentedButton<MovementType?>(
                   showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(value: null, label: Text('Tout')),
-                    ButtonSegment(value: MovementType.sale, label: Text('Ventes')),
-                    ButtonSegment(value: MovementType.entry, label: Text('Entrées')),
-                    ButtonSegment(value: MovementType.loss, label: Text('Pertes')),
+                  style: const ButtonStyle(
+                    padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 6)),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  // Une seule ligne même en grand texte (sinon « Entrée/s »).
+                  segments: [
+                    for (final (value, label) in const [
+                      (null, 'Tout'),
+                      (MovementType.sale, 'Ventes'),
+                      (MovementType.entry, 'Entrées'),
+                      (MovementType.loss, 'Pertes'),
+                    ])
+                      ButtonSegment(
+                        value: value,
+                        label: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1, softWrap: false)),
+                      ),
                   ],
                   selected: {_type},
                   onSelectionChanged: (s) => setState(() => _type = s.first),

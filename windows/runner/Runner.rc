@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "shopnotbook" "\0"
+            VALUE "CompanyName", "ShopBook" "\0"
+            VALUE "FileDescription", "ShopBook - gestion de boutique" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "shopnotbook" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "shopnotbook.exe" "\0"
-            VALUE "ProductName", "shopnotbook" "\0"
+            VALUE "InternalName", "ShopBook" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 ShopBook" "\0"
+            VALUE "OriginalFilename", "ShopBook.exe" "\0"
+            VALUE "ProductName", "ShopBook" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/session.dart';
+import 'brand_logo.dart';
 import 'dashboard/dashboard_screen.dart';
 import 'operations/operations_screen.dart';
 import 'products/stock_screen.dart';
@@ -60,13 +61,46 @@ class _HomeShellState extends State<HomeShell> {
 
   void _select(int i) => setState(() => _index = i);
 
+  static const _pages = [DashboardScreen(), StockScreen(), OperationsScreen(), ReportsScreen(), SettingsScreen()];
+
+  /// Au-delà de cette largeur (ordinateur, tablette en paysage) : menu latéral.
+  static const double wideBreakpoint = 840;
+
   @override
   Widget build(BuildContext context) {
+    final stack = IndexedStack(index: _index, children: _pages);
+    if (MediaQuery.sizeOf(context).width >= wideBreakpoint) {
+      final scheme = Theme.of(context).colorScheme;
+      return Scaffold(
+        body: Row(
+          children: [
+            NavigationRail(
+              selectedIndex: _index,
+              onDestinationSelected: _select,
+              labelType: NavigationRailLabelType.all,
+              leading: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: const BrandLogo(size: 44),
+              ),
+              destinations: [
+                for (final d in _destinations)
+                  NavigationRailDestination(icon: d.icon, selectedIcon: d.selectedIcon, label: Text(d.label)),
+              ],
+            ),
+            VerticalDivider(width: 1, color: scheme.outlineVariant),
+            // Contenu centré et limité en largeur : lisible sur grand écran.
+            Expanded(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1100), child: stack),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: const [DashboardScreen(), StockScreen(), OperationsScreen(), ReportsScreen(), SettingsScreen()],
-      ),
+      body: stack,
       // Libellés limités à 110 % : au-delà, « Opérations » se coupe sur deux lignes.
       bottomNavigationBar: MediaQuery.withClampedTextScaling(
         maxScaleFactor: 1.1,

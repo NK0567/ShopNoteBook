@@ -17,7 +17,7 @@ class AppDatabase {
 
   static Future<Database> open({DatabaseFactory? factory, String? path}) async {
     final f = factory ?? platformDatabaseFactory();
-    final dbPath = path ?? join(await f.getDatabasesPath(), fileName);
+    final dbPath = path ?? join(await platformDatabaseDir(f), fileName);
     return f.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(

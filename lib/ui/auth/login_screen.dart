@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/session.dart';
+import '../brand_logo.dart';
 import '../common.dart';
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
@@ -36,11 +37,7 @@ class AppLogo extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
-        CircleAvatar(
-          radius: 36,
-          backgroundColor: cs.primaryContainer,
-          child: Icon(Icons.storefront, size: 40, color: cs.onPrimaryContainer),
-        ),
+        const BrandLogo(size: 76),
         const SizedBox(height: 12),
         Text('ShopBook', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
         Text(subtitle, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: cs.outline)),
