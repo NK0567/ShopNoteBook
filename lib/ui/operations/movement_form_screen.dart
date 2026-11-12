@@ -34,7 +34,13 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   final _note = TextEditingController();
   List<StockItem> _items = [];
   List<String> _partners = [];
+  Map<int, ProductPricing> _pricing = {};
   StockItem? _selected;
+
+  /// Conditionnement de saisie (null = unité de base).
+  ProductPack? _pack;
+  int get _size => _pack?.quantity ?? 1;
+  List<ProductPack> get _packs => _selected == null ? const [] : (_pricing[_selected!.product.id]?.packs ?? const []);
 
   /// null = « maintenant » : l'heure est prise au moment de l'enregistrement.
   DateTime? _pickedDate;
@@ -67,10 +73,12 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
     final uid = context.read<Session>().userId;
     final items = await repo.inventory(uid);
     final partners = _isLoss ? <String>[] : await repo.partners(uid, widget.type);
+    final pricing = await repo.allPricing(uid);
     if (!mounted) return;
     setState(() {
       _items = items;
       _partners = partners;
+      _pricing = pricing;
       _loading = false;
       final id = selectId ?? _selected?.product.id;
       _selected = id == null ? null : items.where((i) => i.product.id == id).firstOrNull;
@@ -80,8 +88,9 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
 
   void _prefillPrice(StockItem item) {
     if (_isLoss) return;
-    // Coût d'achat proposé : le CUMP actuel (à corriger avec le prix de la facture).
-    final v = item.cump;
+    // Coût d'achat proposé : le CUMP actuel (à corriger avec le prix de la facture),
+    // par conditionnement si la saisie se fait en cartons.
+    final v = item.cump * _size;
     _price.text = v <= 0 ? '' : v.round().toString();
   }
 
@@ -93,6 +102,7 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
     _note.clear();
     setState(() {
       _selected = null;
+      _pack = null;
       _pickedDate = null;
       _resetCount++;
     });
@@ -101,9 +111,17 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   Future<void> _pickProduct() async {
     final picked = await pickProduct(context, _items, needsStock: _isLoss);
     if (picked != null) {
-      setState(() => _selected = picked);
+      setState(() {
+        _selected = picked;
+        _pack = null;
+      });
       _prefillPrice(picked);
     }
+  }
+
+  void _setPack(ProductPack? pack) {
+    setState(() => _pack = pack);
+    if (_selected != null) _prefillPrice(_selected!);
   }
 
   Future<void> _pickDate() async {
@@ -127,19 +145,20 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
     }
     if (!_formKey.currentState!.validate()) return;
     final item = _selected!;
-    final qty = int.parse(_qty.text.trim());
+    // Tout est ramené à l'unité de base : 3 cartons de 24 = 72, coût / 24.
+    final qty = int.parse(_qty.text.trim()) * _size;
     final date = _date;
-    final price = _isLoss ? item.cump : Fmt.parseNumber(_price.text)!;
+    final price = _isLoss ? item.cump : Fmt.parseNumber(_price.text)! / _size;
 
     final lines = <String>[
       '${item.product.name} (${item.product.reference})',
-      'Quantité : ${Fmt.qtyUnit(qty, item.product.unit)}',
+      'Quantité : ${PackMath.label(qty, item.product.unit, _pack?.name, _pack?.quantity)}',
       if (_isLoss) ...[
         'Motif : ${_note.text.trim()}',
         'Valeur perdue (au CUMP) : ${Fmt.money(qty * price)}',
         'Stock après : ${Fmt.qtyUnit(item.stock - qty, item.product.unit)}',
       ] else ...[
-        'Coût d\'achat : ${Fmt.money(price)}',
+        'Coût d\'achat : ${Fmt.money(price * _size)}${_pack == null ? '' : ' le ${_pack!.name.toLowerCase()} (${Fmt.money(price)} / ${item.product.unit})'}',
         'Total : ${Fmt.money(qty * price)}',
         'Stock après : ${Fmt.qtyUnit(item.stock + qty, item.product.unit)}',
       ],
@@ -165,6 +184,8 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
         date: date,
         partner: _isLoss ? null : _partner.text,
         note: _note.text,
+        packName: _pack?.name,
+        packSize: _pack?.quantity,
       );
       if (!mounted) return;
       showSuccess(context, '${m.type.label} ${m.code} enregistrée — ${Fmt.money(m.total)}');
@@ -181,8 +202,9 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
   @override
   Widget build(BuildContext context) {
     final item = _selected;
-    final qty = int.tryParse(_qty.text.trim()) ?? 0;
-    final price = _isLoss ? (item?.cump ?? 0) : (Fmt.parseNumber(_price.text) ?? 0);
+    final qty = (int.tryParse(_qty.text.trim()) ?? 0) * _size;
+    final price = _isLoss ? (item?.cump ?? 0) : (Fmt.parseNumber(_price.text) ?? 0) / _size;
+    final unitLabel = _pack?.name ?? item?.product.unit;
     final title = _isLoss ? 'Déclarer une perte' : 'Nouvelle entrée';
 
     return Scaffold(
@@ -264,6 +286,28 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                       child: Text(_pickedDate == null ? 'Maintenant' : Fmt.date(_pickedDate!)),
                     ),
                   ),
+                  if (item != null && _packs.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text('Saisir en', style: Theme.of(context).textTheme.labelLarge),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        ChoiceChip(
+                          label: Text(item.product.unit),
+                          selected: _pack == null,
+                          onSelected: (_) => _setPack(null),
+                        ),
+                        for (final pk in _packs)
+                          ChoiceChip(
+                            label: Text('${pk.name} de ${pk.quantity}'),
+                            selected: _pack == pk,
+                            onSelected: (_) => _setPack(pk),
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -273,12 +317,15 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                           controller: _qty,
                           keyboardType: TextInputType.number,
                           inputFormatters: intInput,
-                          decoration: InputDecoration(labelText: 'Quantité *', suffixText: item?.product.unit),
+                          decoration: InputDecoration(
+                            labelText: 'Quantité *',
+                            suffixText: unitLabel == null ? null : Fmt.plural(qty ~/ _size, unitLabel),
+                          ),
                           validator: (v) {
                             final err = requiredInt(v, min: 1, field: 'La quantité');
                             if (err != null) return err;
-                            if (_isLoss && item != null && int.parse(v!.trim()) > item.stock) {
-                              return 'Max. ${item.stock < 0 ? 0 : item.stock}';
+                            if (_isLoss && item != null && int.parse(v!.trim()) * _size > item.stock) {
+                              return 'Max. ${item.stock < 0 ? 0 : item.stock ~/ _size}';
                             }
                             return null;
                           },
@@ -291,7 +338,10 @@ class _MovementFormScreenState extends State<MovementFormScreen> {
                             controller: _price,
                             keyboardType: TextInputType.number,
                             inputFormatters: intInput,
-                            decoration: const InputDecoration(labelText: 'Coût unitaire *', suffixText: 'FCFA'),
+                            decoration: InputDecoration(
+                              labelText: _pack == null ? 'Coût unitaire *' : 'Coût du ${_pack!.name.toLowerCase()} *',
+                              suffixText: 'FCFA',
+                            ),
                             validator: (v) => requiredAmount(v, allowZero: false),
                           ),
                         ),

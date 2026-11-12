@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/format.dart';
 import '../../data/models.dart';
 import '../../data/shop_repository.dart';
-import '../../services/pdf_reports.dart';
+import 'documents.dart';
 import '../../services/session.dart';
 import '../common.dart';
 import '../operations/movement_tile.dart';
@@ -111,9 +111,9 @@ class TicketScreen extends StatelessWidget {
             title: Text('Ticket ${t.code}'),
             actions: [
               IconButton(
-                tooltip: 'Reçu PDF',
+                tooltip: 'Reçu, facture, bon de livraison',
                 icon: const Icon(Icons.picture_as_pdf_outlined),
-                onPressed: () => _receipt(context, d),
+                onPressed: () => SalesDocuments.pick(context, d),
               ),
             ],
           ),
@@ -122,6 +122,7 @@ class TicketScreen extends StatelessWidget {
             children: [
               Text(Fmt.dateTime(t.date), style: Theme.of(context).textTheme.bodySmall),
               if (t.client != null) Text('Client : ${t.client}', style: Theme.of(context).textTheme.titleMedium),
+              if (t.hasInvoice) Text('Facture ${t.invoiceCode} du ${Fmt.date(t.invoiceDate!)}'),
               if (t.note != null) Text(t.note!),
               const SizedBox(height: 12),
               KpiGrid(
@@ -193,15 +194,6 @@ class TicketScreen extends StatelessWidget {
         );
       },
     );
-  }
-
-  Future<void> _receipt(BuildContext context, TicketDetail d) async {
-    try {
-      final user = context.read<Session>().user!;
-      await PdfReports.share(await PdfReports.receipt(user, d), 'recu-${d.ticket.code}.pdf');
-    } catch (e) {
-      if (context.mounted) showError(context, e);
-    }
   }
 
   Future<void> _collect(BuildContext context, Ticket t) async {

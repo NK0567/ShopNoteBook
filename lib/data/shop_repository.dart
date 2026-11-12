@@ -350,6 +350,8 @@ class ShopRepository extends ChangeNotifier {
     required DateTime date,
     String? partner,
     String? note,
+    String? packName,
+    int? packSize,
   }) async {
     if (type == MovementType.sale) {
       final item = await stockItem(userId, productId);
@@ -390,6 +392,8 @@ class ShopRepository extends ChangeNotifier {
         'unitCost': cost,
         'partner': _clean(partner),
         'note': _clean(note),
+        'packName': PackMath.isPack(packSize) ? packName : null,
+        'packSize': PackMath.isPack(packSize) ? packSize : null,
         'createdAt': _now(),
       });
       await audit(

@@ -2,7 +2,7 @@ name: shopnotbook
 description: "ShopBook - carnet du boutiquier : stock, entrées/sorties, inventaire (CUMP), bénéfices."
 publish_to: 'none'
 
-version: 3.0.0+3
+version: 4.0.0+4
 
 environment:
   sdk: ^3.9.2

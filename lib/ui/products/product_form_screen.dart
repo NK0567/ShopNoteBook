@@ -21,7 +21,7 @@ class ProductFormScreen extends StatefulWidget {
 
 class _ProductFormScreenState extends State<ProductFormScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _ref, _name, _unit, _threshold, _initialStock, _initialCost, _price;
+  late final TextEditingController _ref, _name, _unit, _threshold, _initialStock, _initialCost, _price, _barcode;
   int? _categoryId;
   List<Category> _categories = [];
   bool _openingLocked = false;
@@ -43,6 +43,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _initialStock = TextEditingController(text: '${p?.initialStock ?? 0}');
     _initialCost = TextEditingController(text: p == null ? '' : n(p.initialUnitCost));
     _price = TextEditingController(text: p == null ? '' : n(p.sellingPrice));
+    _barcode = TextEditingController(text: p?.barcode ?? '');
     _categoryId = p?.categoryId;
     for (final c in [_initialCost, _price]) {
       c.addListener(() => setState(() {}));
@@ -65,7 +66,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   @override
   void dispose() {
-    for (final c in [_ref, _name, _unit, _threshold, _initialStock, _initialCost, _price]) {
+    for (final c in [_ref, _name, _unit, _threshold, _initialStock, _initialCost, _price, _barcode]) {
       c.dispose();
     }
     super.dispose();
@@ -118,6 +119,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           initialUnitCost: _openingLocked ? widget.product!.initialUnitCost : cost,
           sellingPrice: price,
           archived: widget.product?.archived ?? false,
+          barcode: _barcode.text,
         ),
       );
       if (!mounted) return;
@@ -206,7 +208,22 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 controller: ctrl,
                 focusNode: focus,
                 onChanged: (v) => _unit.text = v,
-                decoration: const InputDecoration(labelText: 'Unité de vente', hintText: 'unité, sac, carton, kg…'),
+                decoration: const InputDecoration(
+                  labelText: 'Unité de base',
+                  hintText: 'unité, bouteille, kg, mètre…',
+                  helperText: 'La plus petite quantité vendue. Les cartons/sacs se règlent dans « Tarifs et conditionnements ».',
+                  helperMaxLines: 2,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _barcode,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Code-barres (facultatif)',
+                hintText: 'Scannez avec la douchette ou tapez le code',
+                prefixIcon: Icon(Icons.qr_code_scanner),
               ),
             ),
             const SizedBox(height: 24),
@@ -216,7 +233,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               controller: _price,
               keyboardType: TextInputType.number,
               inputFormatters: intInput,
-              decoration: const InputDecoration(labelText: 'Prix de vente unitaire *', suffixText: 'FCFA'),
+              decoration: const InputDecoration(
+                labelText: 'Prix de vente « Détail » *',
+                suffixText: 'FCFA',
+                helperText: 'Prix à l\'unité de base. Prix de gros : menu ⋮ de la fiche produit.',
+              ),
               validator: (v) => requiredAmount(v),
             ),
             const SizedBox(height: 24),

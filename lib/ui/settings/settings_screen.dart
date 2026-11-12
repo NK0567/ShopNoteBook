@@ -7,7 +7,9 @@ import '../../data/shop_repository.dart';
 import '../../services/backup_service.dart';
 import '../../services/session.dart';
 import '../auth/recovery_code_dialog.dart';
+import '../clients/clients_screen.dart';
 import '../common.dart';
+import 'shop_settings_screens.dart';
 
 const _palette = <int>[
   0xFFFF9800, // orange
@@ -38,6 +40,29 @@ class SettingsScreen extends StatelessWidget {
             subtitle: Text('${user.name} · ${user.email}'),
             trailing: const Icon(Icons.edit),
             onTap: () => _editProfile(context, user),
+          ),
+          const Divider(),
+          _header(context, 'Boutique'),
+          ListTile(
+            leading: const Icon(Icons.storefront_outlined),
+            title: const Text('Ma boutique'),
+            subtitle: const Text('Détaillant / grossiste, adresse, NIU, RCCM, TVA, imprimante'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ShopProfileScreen())),
+          ),
+          ListTile(
+            leading: const Icon(Icons.local_offer_outlined),
+            title: const Text('Tarifs'),
+            subtitle: const Text('Détail, demi-gros, gros, revendeur… et paliers de quantité'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PriceLevelsScreen())),
+          ),
+          ListTile(
+            leading: const Icon(Icons.people_outline),
+            title: const Text('Clients'),
+            subtitle: const Text('Téléphone, tarif attitré, plafond de crédit'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ClientsScreen())),
           ),
           const Divider(),
           _header(context, 'Stock'),
@@ -136,7 +161,7 @@ class SettingsScreen extends StatelessWidget {
           const Divider(),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ShopBook 3.0'),
+            title: Text('ShopBook 4.0'),
             subtitle: Text('Données stockées uniquement sur cet appareil : sauvegardez chaque semaine.'),
           ),
         ],

@@ -11,12 +11,15 @@ import '../operations/movement_form_screen.dart';
 import '../sales/cart_screen.dart';
 import '../operations/movement_tile.dart';
 import 'product_form_screen.dart';
+import 'product_pricing_screen.dart';
 
 class _Detail {
   final StockItem? item;
   final List<Movement> movements;
   final bool hasMovements;
-  _Detail(this.item, this.movements, this.hasMovements);
+  final ProductPricing pricing;
+  final List<PriceLevel> levels;
+  _Detail(this.item, this.movements, this.hasMovements, this.pricing, this.levels);
 }
 
 class ProductDetailScreen extends StatelessWidget {
@@ -28,7 +31,13 @@ class ProductDetailScreen extends StatelessWidget {
     return Reloading<_Detail>(
       load: (repo, uid) async {
         final moves = await repo.movements(uid, productId: productId);
-        return _Detail(await repo.stockItem(uid, productId), moves, moves.isNotEmpty);
+        return _Detail(
+          await repo.stockItem(uid, productId),
+          moves,
+          moves.isNotEmpty,
+          await repo.productPricing(productId),
+          await repo.priceLevels(uid),
+        );
       },
       builder: (context, d) {
         final item = d.item;
@@ -52,6 +61,7 @@ class ProductDetailScreen extends StatelessWidget {
               PopupMenuButton<String>(
                 onSelected: (v) => _menu(context, v, item, d.hasMovements),
                 itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'pricing', child: Text('Tarifs et conditionnements')),
                   if (!p.archived) ...[
                     const PopupMenuItem(value: 'count', child: Text('Inventaire (compter le stock)')),
                     if (item.stock > 0) const PopupMenuItem(value: 'loss', child: Text('Déclarer une perte')),
@@ -86,7 +96,7 @@ class ProductDetailScreen extends StatelessWidget {
                 children: [
                   KpiCard(
                     label: 'Stock final',
-                    value: Fmt.qtyUnit(item.stock, p.unit),
+                    value: PackMath.stockLabel(item.stock, p.unit, d.pricing.mainPack?.name, d.pricing.mainPack?.quantity),
                     icon: Icons.inventory_2,
                     color: statusColor(context, item.status),
                     subtitle: 'Seuil d\'alerte : ${p.alertThreshold}',
@@ -122,9 +132,20 @@ class ProductDetailScreen extends StatelessWidget {
                       _line('Ventes', '- ${item.qtyOut}'),
                       if (item.qtyLoss > 0) _line('Pertes', '- ${item.qtyLoss} (${Fmt.money(item.valueLoss)})'),
                       const Divider(),
-                      _line('Prix de vente', Fmt.money(p.sellingPrice)),
+                      _line('Prix Détail', Fmt.money(p.sellingPrice)),
+                      for (final l in d.pricing.levelsFor(d.levels))
+                        _line(
+                          'Prix ${l.levelName}${l.minQty > 0 ? ' (dès ${l.minQty})' : ''}',
+                          Fmt.money(l.price),
+                        ),
+                      for (final pk in d.pricing.packs)
+                        _line(
+                          '${pk.name} de ${pk.quantity}',
+                          Fmt.money(Pricing.packPrice(fixedPackPrice: pk.price, packSize: pk.quantity, unitPrice: p.sellingPrice)),
+                        ),
                       _line('Marge unitaire au CUMP', Fmt.money(p.sellingPrice - item.cump)),
                       _line('Taux de marge', Fmt.percent(StockMath.marginRate(p.sellingPrice, item.cump))),
+                      if ((p.barcode ?? '').isNotEmpty) _line('Code-barres', p.barcode!),
                       if (item.suggestedReorder > 0) ...[
                         const Divider(),
                         _line('Quantité à commander (suggestion)', Fmt.qtyUnit(item.suggestedReorder, p.unit)),
@@ -239,7 +260,9 @@ class ProductDetailScreen extends StatelessWidget {
     final uid = context.read<Session>().userId;
     final p = item.product;
     try {
-      if (action == 'count') {
+      if (action == 'pricing') {
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => ProductPricingScreen(item: item)));
+      } else if (action == 'count') {
         await _count(context, item);
       } else if (action == 'loss') {
         _open(context, MovementType.loss, p);

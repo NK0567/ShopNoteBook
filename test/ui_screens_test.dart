@@ -263,10 +263,20 @@ void main() {
 
         await tester.tap(find.text('Réglages').last);
         await shot('15_reglages');
-        await tester.tap(find.text('Catégories'));
-        await shot('16_categories');
-        await back();
-        await settle();
+        final settingsList = find.descendant(of: find.byType(SettingsScreen), matching: find.byType(Scrollable)).first;
+        for (final (label, name) in const [
+          ('Ma boutique', '15a_ma_boutique'),
+          ('Tarifs', '15b_tarifs'),
+          ('Clients', '15c_clients'),
+          ('Catégories', '16_categories'),
+        ]) {
+          await tester.scrollUntilVisible(find.text(label), 150, scrollable: settingsList);
+          await settle(2);
+          await tester.tap(find.text(label));
+          await shot(name);
+          await back();
+          await settle();
+        }
         await tester.scrollUntilVisible(
           find.text('Journal d\'activité'),
           150,

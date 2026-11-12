@@ -20,11 +20,12 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze
+      # SQLite pour les tests (sqflite_common_ffi charge libsqlite3.so).
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - name: Tests (logique, PDF, écrans)
-        run: flutter test
+        run: flutter test --reporter expanded
 
   windows:
-    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +59,6 @@ jobs:
           path: build/installer/*
 
   android:
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
